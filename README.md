@@ -155,19 +155,22 @@ The evaluator also reports formula (CDM) and figure scores, which are not part o
 - **Repeat runs.** Model outputs can vary between runs even at temperature 0, because providers do not guarantee
   determinism.
 
-## Difficulty router (not included)
+## Difficulty router
 
-The paper's difficulty router is released separately. It decides, for each document, whether the document goes through
-this pipeline or to a proprietary model. To combine the two:
-1. Run the router first.
+The difficulty router is provided in [`router/`](router/). It decides, for each document, whether the document goes through
+this pipeline (`SOFT`) or to a proprietary model (`HARD`):
+1. Run the router first (e.g. `python router/router.py batch --dir <pdf_folder> --output routes.csv`).
 2. Put the documents routed to the pipeline in `DOCUMENTS` in `tide/run.py`.
 3. Score the two groups with the same evaluation code.
+
+See [`router/README.md`](router/README.md) for installation, CLI flags, and Python API details.
 
 ## Tests
 
 ```bash
 (cd tide && python -m pytest)
 (cd mpdocbench && python -m pytest)
+(cd router && python -m unittest discover -s tests)
 ```
 
 The tests are synthetic and make no model calls.
