@@ -24,13 +24,15 @@ scipy==1.17.1
 tqdm==4.67.3
 RapidFuzz==3.14.5
 
-# MPDocBench evaluation: needed by the official MPDocBench metric code that mpdocbench/src/eval/mpdocbench.py
-# imports from data/mpdocbench/repo/MPDocBench (TEDS, HeadTEDS, matching)
+# Official MPDocBench evaluation code, imported from data/mpdocbench/repo/MPDocBench by both packages
+# (TEDS, HeadTEDS, matching, and the official Text Edit on TIDE and MPDocBench)
 Levenshtein==0.27.4
 apted==1.0.3
 lxml==6.1.1
 pylatexenc==2.11
 evaluate==0.4.6
+func-timeout==4.3.5
+loguru==0.7.3
 
 # tests
 pytest==9.1.1

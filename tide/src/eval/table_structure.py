@@ -6,14 +6,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 Grid = List[List[str]]
 
-try:
-    from scipy.optimize import linear_sum_assignment as _lsa
-    import numpy as _np
-    HAVE_SCIPY = True
-except Exception:
-    HAVE_SCIPY = False
-
-METRIC_KEYS = ("table_teds", "table_teds_struct", "table_grits_con", "table_grits_top")
+METRIC_KEYS = ("table_teds",)
 
 _WS = re.compile(r"\s+")
 
@@ -118,7 +111,7 @@ def _prepare(root: _Node) -> Tuple[List[Tuple[str, str]], List[int], List[int]]:
     return labels, lld, sorted(last_by_lld.values())
 
 
-def _tree_edit_distance(a: _Node, b: _Node, struct_only: bool) -> float:
+def _tree_edit_distance(a: _Node, b: _Node) -> float:
     la, llda, kra = _prepare(a)
     lb, lldb, krb = _prepare(b)
     na, nb = len(la), len(lb)
@@ -127,7 +120,7 @@ def _tree_edit_distance(a: _Node, b: _Node, struct_only: bool) -> float:
         (ta, xa), (tb, xb) = la[x], lb[y]
         if ta != tb:
             return _BIG
-        if ta == "td" and not struct_only:
+        if ta == "td":
             return 1.0 - _cell_sim(xa, xb)
         return 0.0
 
@@ -155,7 +148,7 @@ def _tree_edit_distance(a: _Node, b: _Node, struct_only: bool) -> float:
     return td[na - 1][nb - 1]
 
 
-def teds(grid_a: Grid, grid_b: Grid, struct_only: bool = False) -> float:
+def teds(grid_a: Grid, grid_b: Grid) -> float:
     MAX_EVAL_ROWS = 30
     if len(grid_a) > MAX_EVAL_ROWS:
         grid_a = grid_a[:MAX_EVAL_ROWS]
@@ -168,59 +161,8 @@ def teds(grid_a: Grid, grid_b: Grid, struct_only: bool = False) -> float:
     denom = max(na, nb)
     if denom == 0:
         return 1.0
-    dist = _tree_edit_distance(ta, tb, struct_only)
+    dist = _tree_edit_distance(ta, tb)
     return max(0.0, 1.0 - dist / denom)
-
-
-def _assign(sim: List[List[float]]) -> List[Tuple[int, int]]:
-    if not sim or not sim[0]:
-        return []
-    if HAVE_SCIPY:
-        cost = _np.asarray([[-s for s in row] for row in sim], dtype=float)
-        r, c = _lsa(cost)
-        return list(zip(r.tolist(), c.tolist()))
-    pairs, used_r, used_c = [], set(), set()
-    order = sorted(((sim[i][j], i, j) for i in range(len(sim)) for j in range(len(sim[0]))),
-                   reverse=True)
-    for _, i, j in order:
-        if i not in used_r and j not in used_c:
-            used_r.add(i); used_c.add(j); pairs.append((i, j))
-    return pairs
-
-
-def _line_sim(line_a: Sequence[str], line_b: Sequence[str]) -> float:
-    sim = [[_cell_sim(a, b) for b in line_b] for a in line_a]
-    return sum(sim[i][j] for i, j in _assign(sim))
-
-
-def grits(grid_a: Grid, grid_b: Grid) -> Tuple[float, float]:
-    MAX_ROWS = 30
-    if len(grid_a) > MAX_ROWS:
-        grid_a = grid_a[:MAX_ROWS]
-    if len(grid_b) > MAX_ROWS:
-        grid_b = grid_b[:MAX_ROWS]
-
-    if not grid_a or not grid_b or not grid_a[0] or not grid_b[0]:
-        return (0.0, 0.0)
-    ra, ca = len(grid_a), len(grid_a[0])
-    rb, cb = len(grid_b), len(grid_b[0])
-    n_cells = ra * ca + rb * cb
-    if n_cells == 0:
-        return (0.0, 0.0)
-
-    row_sim = [[_line_sim(grid_a[i], grid_b[j]) for j in range(rb)] for i in range(ra)]
-    row_pairs = _assign(row_sim)
-    cols_a = [[grid_a[i][c] for i in range(ra)] for c in range(ca)]
-    cols_b = [[grid_b[i][c] for i in range(rb)] for c in range(cb)]
-    col_sim = [[_line_sim(cols_a[c], cols_b[d]) for d in range(cb)] for c in range(ca)]
-    col_pairs = _assign(col_sim)
-
-    content = sum(_cell_sim(grid_a[i][j], grid_b[ii][jj])
-                  for i, ii in row_pairs for j, jj in col_pairs)
-    grits_con = 2.0 * content / n_cells
-    topology = len(row_pairs) * len(col_pairs)
-    grits_top = 2.0 * topology / n_cells
-    return (grits_con, grits_top)
 
 
 def _cells(grid: Grid) -> set:
@@ -237,13 +179,7 @@ def _match_score(gold: Grid, pred: Grid) -> float:
 
 
 def _pair_scores(gold: Grid, pred: Grid) -> Dict[str, float]:
-    con, top = grits(gold, pred)
-    return {
-        "table_teds": teds(gold, pred, struct_only=False),
-        "table_teds_struct": teds(gold, pred, struct_only=True),
-        "table_grits_con": con,
-        "table_grits_top": top,
-    }
+    return {"table_teds": teds(gold, pred)}
 
 
 def score_tables(gold_tables: Sequence[Any], pred_tables: Sequence[Any]) -> Optional[Dict[str, float]]:

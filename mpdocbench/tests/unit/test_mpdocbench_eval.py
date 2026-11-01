@@ -1,11 +1,9 @@
 import json
-from pathlib import Path
 
 import pytest
 
 from src.core import config
 from src.eval import mpdocbench as mpdb
-from src.eval import cdm_formula
 
 pytestmark = pytest.mark.skipif(not (config.MPDOCBENCH_REPO / "metrics").is_dir(),
                                 reason="official MPDocBench code not downloaded (data/mpdocbench/repo/MPDocBench)")
@@ -59,7 +57,7 @@ def _gold(with_truncation=False):
 
 def test_leaf_scorers_import_and_behave():
     L = mpdb._load_leaf()
-    for k in ("TEDS", "HeadTEDS", "clean_string", "textblock2unicode", "normalized_formula",
+    for k in ("TEDS", "HeadTEDS", "clean_string", "textblock2unicode",
               "normalized_table", "merge_tables", "relation_utils", "match_gt2pred", "lev_distance"):
         assert k in L, f"leaf handle missing: {k}"
     norm = L["normalized_table"](_TABLE_HTML, format="html")
@@ -67,22 +65,17 @@ def test_leaf_scorers_import_and_behave():
     assert L["TEDS"](structure_only=False).evaluate(norm, norm) == pytest.approx(1.0)
     score, _depth = L["HeadTEDS"]().evaluate(["# A", "## B"], ["# A", "## B"])
     assert score == pytest.approx(1.0)
-    out = L["normalized_formula"](r"$$\left(x\right)$$")
-    assert "$" not in out and "left" not in out and "right" not in out
     assert L["textblock2unicode"]("plain text") == "plain text"
 
 
-def test_gold_loader_truncation_heads_figures():
+def test_gold_loader_truncation_and_heads():
     g = mpdb.build_gold_doc(_gold(with_truncation=True))
     assert len(g.merged_text) == 1 and g.merged_text[0]["cross_pages"] == 2
     assert g.merged_text[0]["text"] == "part one part two"
     parent_son, head_nodes = g.head_input
     assert g.n_titles == 1 and set(head_nodes) == {1} and parent_son == [
         {"source_anno_id": "root", "target_anno_id": 1, "relation_type": "parent_son"}]
-    assert len(g.figures) == 1
-    assert g.figures[0]["bbox_norm"] == pytest.approx([100.0, 100.0, 300.0, 300.0])
-    assert g.figures[0]["page_rank"] == 0
-    assert len(g.tables) == 1 and len(g.equations) == 1
+    assert len(g.tables) == 1
     assert any(t["category"] == "title" for t in g.text_elems)
 
 
@@ -93,10 +86,7 @@ def test_pred_builder_maps_categories_and_shapes():
     assert pred.head_md == ["# Intro"]
     tbl = next(e for e in pred.elements if e.block_type == "table")
     assert "<td>A</td>" in tbl.html and "<td>1</td>" in tbl.html
-    eq = next(e for e in pred.elements if e.block_type == "equation")
-    assert eq.latex == "$$E=mc^2$$"
     assert pred.elements[0].page == 1 and pred.elements[0].seq == 1
-    assert pred.figures == []
 
 
 def test_grid_to_html_and_pred_table_html_fallback():
@@ -106,13 +96,18 @@ def test_grid_to_html_and_pred_table_html_fallback():
     assert mpdb._pred_table_html(unit) == "<table><tr><td>x</td></tr></table>"
 
 
-def test_score_text_identical_and_perturbed():
-    g = mpdb.build_gold_doc(_gold())
-    p = mpdb.build_pred_doc(_fd(), "testdoc")
-    assert mpdb.score_text(p, g)["score"] == pytest.approx(1.0)
+def test_pred_markdown_export():
+    md = mpdb.pred_markdown(_fd())
+    assert md == "# Intro\n\nHello world.\n\n" + _TABLE_HTML + "\n\n$$E=mc^2$$"
+
+
+def test_official_text_edit_identical_and_perturbed():
+    same = mpdb.official_text_edit.score(_gold(), mpdb.pred_markdown(_fd()), "testdoc.pdf")
+    assert same["edit_dist"] == pytest.approx(0.0) and same["score"] == pytest.approx(1.0)
+    assert same["n_blocks"] >= 2 and set(same) == {"edit_num", "upper", "edit_dist", "score", "n_blocks"}
     fd2 = _fd()
     fd2["units"] = [u for u in fd2["units"] if u["block_type"] != "text_block"]
-    assert mpdb.score_text(mpdb.build_pred_doc(fd2, "testdoc"), g)["score"] < 1.0
+    assert mpdb.official_text_edit.score(_gold(), mpdb.pred_markdown(fd2), "testdoc.pdf")["score"] < 1.0
 
 
 def test_text_diag_flags_over_production():
@@ -132,114 +127,6 @@ def test_score_tables_and_heads_identical():
     assert t["teds"] == pytest.approx(1.0) and t["n_gold"] == 1 and t["n_pred"] == 1
     h = mpdb.score_heads(p, g)
     assert h["score"] == pytest.approx(1.0) and h["n_gold_titles"] == 1
-
-
-def test_score_equations():
-    g = mpdb.build_gold_doc(_gold())
-    p = mpdb.build_pred_doc(_fd(), "testdoc")
-    res = mpdb.score_equations(p, g)
-    assert res["score"] == pytest.approx(1.0)
-    assert res["method"] in ("cdm", "edit")
-    if not cdm_formula.cdm_available():
-        assert res["method"] == "edit"
-    gold_no_eq = _gold()
-    gold_no_eq["layout_dets"] = [d for d in gold_no_eq["layout_dets"]
-                                 if d["category_type"] != "equation_isolated"]
-    assert mpdb.score_equations(p, mpdb.build_gold_doc(gold_no_eq)) is None
-
-
-def test_score_equations_diag():
-    g = mpdb.build_gold_doc(_gold())
-    p = mpdb.build_pred_doc(_fd(), "testdoc")
-    d = mpdb.score_equations_diag(p, g)
-    assert d["score"] == pytest.approx(1.0) and d["n_gold"] == 1 and d["n_pred"] == 1
-    fd2 = _fd()
-    fd2["units"][3]["content"]["text"] = "$$E=mc^3 + zzzzz$$"
-    assert mpdb.score_equations_diag(mpdb.build_pred_doc(fd2, "testdoc"), g)["score"] < 1.0
-    gold_no_eq = _gold()
-    gold_no_eq["layout_dets"] = [x for x in gold_no_eq["layout_dets"]
-                                 if x["category_type"] != "equation_isolated"]
-    assert mpdb.score_equations_diag(p, mpdb.build_gold_doc(gold_no_eq)) is None
-
-
-def test_equation_align_reuses_paper_matcher():
-    gold = [{"latex": "E=mc^2", "order": 1}, {"latex": "a^2+b^2=c^2", "order": 2}]
-    pairs = cdm_formula.align(gold, ["E=mc^2", "x+y"], "d")
-    assert ("E=mc^2", "E=mc^2") in pairs and len(pairs) == 2
-    assert cdm_formula.align([{"latex": "E=mc^2", "order": 1}], [], "d") == [("E=mc^2", "")]
-    assert cdm_formula.align([{"latex": "E=mc^2", "order": 1}],
-                             ["E=mc^2", "zzz", "qqq"], "d") == [("E=mc^2", "E=mc^2")]
-    assert cdm_formula._strip_delims("$$ x^2 $$") == "x^2"
-    assert cdm_formula._strip_delims("```latex\ny^2\n```", is_pred=True) == "y^2"
-    assert cdm_formula._strip_delims(r"\[ z^2 \]") == "z^2"
-
-
-def test_equation_fallback_when_cdm_unavailable(monkeypatch):
-    g = mpdb.build_gold_doc(_gold())
-    p = mpdb.build_pred_doc(_fd(), "testdoc")
-    monkeypatch.setattr(mpdb.config, "EQUATION_METRIC", "cdm")
-    monkeypatch.setattr(mpdb.cdm_formula, "cdm_available", lambda: False)
-    res = mpdb.score_equations(p, g, "testdoc")
-    assert res["method"] == "edit"
-    assert res["score"] == pytest.approx(mpdb.score_equations_diag(p, g)["score"])
-
-
-def test_equation_cdm_failure_degrades_to_edit(monkeypatch):
-    g = mpdb.build_gold_doc(_gold())
-    p = mpdb.build_pred_doc(_fd(), "testdoc")
-    monkeypatch.setattr(mpdb.config, "EQUATION_METRIC", "cdm")
-    monkeypatch.setattr(mpdb.cdm_formula, "cdm_available", lambda: True)
-
-    def _boom(*a, **k):
-        raise RuntimeError("render toolchain missing")
-    monkeypatch.setattr(mpdb.cdm_formula, "score", _boom)
-    res = mpdb.score_equations(p, g, "testdoc")
-    assert res["method"] == "edit"
-
-
-def test_cdm_work_dir_override(monkeypatch, tmp_path):
-    run_dir = tmp_path / "run_x"
-    monkeypatch.setattr(mpdb.config, "EQUATION_CDM_WORK_DIR", None)
-    assert mpdb._resolve_cdm_work_dir(run_dir) == run_dir / "_mpdocbench" / "_cdm_work"
-    monkeypatch.setattr(mpdb.config, "EQUATION_CDM_WORK_DIR", "/tmp/mpdocbench_cdm_work")
-    assert mpdb._resolve_cdm_work_dir(run_dir) == Path("/tmp/mpdocbench_cdm_work")
-
-
-def test_equation_micro_aggregation():
-    docA = {"doc": "a", "equation": {"score": 1.0, "n_pairs": 1, "sum_f1": 1.0, "method": "cdm"}}
-    docB = {"doc": "b", "equation": {"score": 0.0, "n_pairs": 3, "sum_f1": 0.0, "method": "cdm"}}
-    agg = mpdb._aggregate([docA, docB], {"a": "paper", "b": "paper"})
-    assert agg["overall"]["equation"] == pytest.approx(0.25)
-
-
-def test_equation_micro_none_when_edit_fallback():
-    docA = {"doc": "a", "equation": {"score": 0.5, "n_gold": 1, "n_pred": 1, "method": "edit"}}
-    assert mpdb._equation_micro([docA]) is None
-    agg = mpdb._aggregate([docA], {"a": "paper"})
-    assert agg["overall"]["equation"] == pytest.approx(0.5)
-    md = mpdb.render_weak_spots(
-        {"run": "r", "skipped_no_gold": [], "models": {"m": {"per_doc": [docA], "aggregate": agg}}},
-        {"a": "paper"})
-    assert "edit-distance fallback" in md and "Equation(edit!)" in md
-
-
-@pytest.mark.skipif(not cdm_formula.cdm_available(),
-                    reason="CDM toolchain (xelatex/magick/node/skimage) absent — run under WSL")
-def test_cdm_real(tmp_path):
-    r = cdm_formula.score([{"latex": "x^2", "order": 1}], ["x^2"], "d", tmp_path)
-    assert r["n_pairs"] == 1 and r["pair_f1"][0] == pytest.approx(1.0)
-
-
-def test_score_figures_match_and_disjoint():
-    gold = GoldDoc(figures=[{"page_id": 1, "page_rank": 0, "bbox_norm": [100, 100, 300, 300]}])
-    hit = PredDoc(figures=[{"page_id": 1, "page_rank": 0, "bbox_norm": [100, 100, 300, 300]}])
-    r = mpdb.score_figures(hit, gold)
-    assert r["f1"] == pytest.approx(1.0) and r["matched"] == 1
-    miss = PredDoc(figures=[{"page_id": 1, "page_rank": 0, "bbox_norm": [500, 500, 600, 600]}])
-    assert mpdb.score_figures(miss, gold)["f1"] == 0.0
-    wrong_page = PredDoc(figures=[{"page_id": 2, "page_rank": 1, "bbox_norm": [100, 100, 300, 300]}])
-    assert mpdb.score_figures(wrong_page, gold)["matched"] == 0
-    assert mpdb.score_figures(PredDoc(figures=[]), GoldDoc(figures=[])) is None
 
 
 def _ro_gold():
@@ -384,8 +271,7 @@ def test_score_relation_optional():
 def test_evaluate_doc_end_to_end():
     res = mpdb.evaluate_doc("testdoc", _fd(), _gold(with_truncation=True))
     assert res["doc"] == "testdoc"
-    for key in ("text", "equation", "equation_diag", "table", "heads", "reading_order", "merged_text",
-                "merged_table", "counts"):
+    for key in ("text", "table", "heads", "reading_order", "merged_text", "merged_table", "counts"):
         assert key in res
     for _name, path in mpdb._PRIMARY:
         v = mpdb._dig(res, path)
@@ -469,14 +355,14 @@ def test_apply_redirect_when_gold_has_no_tables():
     gold = mpdb.build_gold_doc(_gold_without_tables())
     assert gold.tables == []
     pred = mpdb.build_pred_doc(_fd(), "testdoc")
-    before = mpdb.score_text(pred, gold)["pred_chars"]
+    before = len(mpdb._pred_text_entries(pred))
     m = mpdb.match_tables(pred, gold)
     assert len(m.unmatched_pred) == 1 and m.n_gold == 0
     mpdb.apply_table_text_redirect(pred, m)
     assert not any(e.block_type == "table" for e in pred.elements)
     demoted = next(e for e in pred.elements if "1" in e.text and "2" in e.text)
     assert demoted.html == "" and demoted.block_type == "text_block" and demoted.category == "text_block"
-    assert mpdb.score_text(pred, gold)["pred_chars"] > before
+    assert len(mpdb._pred_text_entries(pred)) == before + 1
 
 
 def test_redirect_keeps_matched_table_and_redirects_extra():
@@ -518,7 +404,8 @@ def test_table_diag_none_when_no_tables_either_side():
 def test_evaluate_doc_redirects_unmatched_table_into_text():
     res = mpdb.evaluate_doc("testdoc", _fd(), _gold_without_tables())
     assert res["table"] is None
-    assert res["text"]["pred_chars"] > 0 and res["text"]["score"] > 0.0
+    assert res["text"]["n_blocks"] > 0 and res["text"]["score"] > 0.0
+    assert res["text_diag"]["n_pred"] == 3
     assert res["table_diag"]["precision"] == 0.0 and res["table_diag"]["n_pred"] == 1
 
 

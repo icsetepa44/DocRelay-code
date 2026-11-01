@@ -15,12 +15,12 @@ def text_and_tables(metrics: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     for label, docs in (metrics.get("results") or {}).items():
         scorable = {k: d for k, d in docs.items()
                     if d.get("gold_clauses") or d.get("gold_metadata") or d.get("gold_tables")}
+        text_vals = [d["text_edit"]["edit_dist"] for d in scorable.values() if d.get("text_edit")]
         teds_vals = [d["table_teds"] for d in docs.values() if isinstance(d.get("table_teds"), (int, float))]
         out[label] = {
-            "text_edit": (1 - statistics.fmean(d["doc_edit_similarity"] for d in scorable.values())
-                          if scorable else None),
+            "text_edit": statistics.fmean(text_vals) if text_vals else None,
             "table_teds": 100 * statistics.fmean(teds_vals) if teds_vals else None,
-            "docs_scored": len(scorable), "docs_with_tables": len(teds_vals),
+            "docs_scored": len(text_vals), "docs_with_tables": len(teds_vals),
         }
     return out
 

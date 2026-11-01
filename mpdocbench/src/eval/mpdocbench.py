@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import json
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,9 +14,7 @@ if str(_DU) not in sys.path:
     sys.path.insert(0, str(_DU))
 
 from src.core import config
-from src.ocr.chandra_adapter import ocr_dir_for
-from src.eval import adapt
-from src.eval import cdm_formula
+from src.eval import adapt, official_text_edit
 from src.eval.table_structure import to_grid, _assign
 
 
@@ -31,8 +30,6 @@ BLOCK_TO_CATEGORY: Dict[str, str] = {
 }
 FURNITURE_BLOCK_TYPES = {"header_footer_page_number"}
 DROP_BLOCK_TYPES = {"noise_or_separator"}
-
-FIGURE_LABELS = {"Image", "Figure", "Diagram"}
 
 GOLD_TEXT_CATEGORIES = {"text_block", "title", "figure_caption", "table_caption", "caption",
                         "list", "footnote"}
@@ -92,7 +89,6 @@ def _load_leaf() -> Dict[str, Any]:
         HeadTEDS=hm.HeadTEDS,
         clean_string=dp.clean_string,
         textblock2unicode=dp.textblock2unicode,
-        normalized_formula=dp.normalized_formula,
         normalized_table=dp.normalized_table,
         merge_tables=mt.merge_tables,
         relation_utils=ru,
@@ -116,14 +112,6 @@ def _norm_table_html(html: str) -> str:
         return L["normalized_table"](html or "", format="html")
     except Exception:
         return html or ""
-
-
-def _norm_formula(latex: str) -> str:
-    L = _load_leaf()
-    try:
-        return L["normalized_formula"](latex or "")
-    except Exception:
-        return (latex or "").strip()
 
 
 def _edit(a: str, b: str) -> Tuple[int, int]:
@@ -195,7 +183,6 @@ class PredElement:
     seq: int
     text: str = ""
     html: str = ""
-    latex: str = ""
     table_text: str = ""
     furniture: bool = False
     merged: bool = False
@@ -205,7 +192,6 @@ class PredElement:
 class PredDoc:
     elements: List[PredElement] = field(default_factory=list)
     head_md: List[str] = field(default_factory=list)
-    figures: List[Dict[str, Any]] = field(default_factory=list)
     n_pages: int = 0
     page_universe: List[int] = field(default_factory=list)
 
@@ -232,8 +218,6 @@ def build_pred_doc(fd: Dict[str, Any], doc: str) -> PredDoc:
         if bt == "table":
             el.html = _pred_table_html(u)
             el.table_text = adapt._unit_text(u)
-        elif bt == "equation":
-            el.latex = adapt._unit_text(u)
         else:
             el.text = adapt._unit_text(u)
         elements.append(el)
@@ -247,53 +231,39 @@ def build_pred_doc(fd: Dict[str, Any], doc: str) -> PredDoc:
             level, text = _heading_level_text(u or {})
             head_md.append("#" * level + " " + text)
 
-    figures = _pred_figures(doc)
     page_universe = sorted({e.page for e in elements})
-    return PredDoc(elements=elements, head_md=head_md, figures=figures,
+    return PredDoc(elements=elements, head_md=head_md,
                    n_pages=len(page_universe), page_universe=page_universe)
 
 
-def _pred_figures(doc: str) -> List[Dict[str, Any]]:
-    layout_dir = ocr_dir_for(doc) / "layout"
-    if not layout_dir.is_dir():
-        return []
-    per_page: List[Tuple[int, List[Dict[str, Any]]]] = []
-    for path in sorted(layout_dir.glob("page_*.json")):
-        try:
-            d = json.loads(path.read_text(encoding="utf-8"))
-        except (ValueError, OSError):
+def pred_markdown(fd: Dict[str, Any]) -> str:
+    items: List[Tuple[int, int, str]] = []
+    for u in fd.get("units", []) or []:
+        bt = u.get("block_type", "")
+        if bt in DROP_BLOCK_TYPES or bt in FURNITURE_BLOCK_TYPES or bt == "figure":
             continue
-        pb = d.get("page_box") or [0, 0, 0, 0]
-        pw, ph = (pb[2] - pb[0]), (pb[3] - pb[1])
-        if not pw or not ph:
-            continue
-        page_num = int(d.get("page_num", 0))
-        boxes = []
-        for c in d.get("chunks", []) or []:
-            if c.get("label") not in FIGURE_LABELS:
-                continue
-            bb = c.get("bbox") or []
-            if len(bb) < 4:
-                continue
-            boxes.append({
-                "bbox_norm": [bb[0] / pw * 1000, bb[1] / ph * 1000,
-                              bb[2] / pw * 1000, bb[3] / ph * 1000],
-            })
-        per_page.append((page_num, boxes))
-    per_page.sort(key=lambda x: x[0])
-    out: List[Dict[str, Any]] = []
-    for rank, (page_num, boxes) in enumerate(per_page):
-        for b in boxes:
-            out.append({"page_id": page_num, "page_rank": rank, "bbox_norm": b["bbox_norm"]})
-    return out
+        ids = u.get("source_block_ids") or []
+        page, seq = _parse_page_seq(ids[0]) if ids else (0, 0)
+        if bt == "heading":
+            level, text = _heading_level_text(u)
+            md = ("#" * max(1, int(level or 1)) + " " + text.strip()) if (text or "").strip() else ""
+        elif bt == "table":
+            md = _pred_table_html(u)
+        elif bt == "equation":
+            latex = adapt._unit_text(u).strip()
+            md = latex if latex.startswith(("$$", "\\[")) else (f"$$\n{latex}\n$$" if latex else "")
+        else:
+            md = adapt._unit_text(u)
+        if md and md.strip():
+            items.append((page, seq, md.strip()))
+    items.sort(key=lambda x: (x[0], x[1]))
+    return "\n\n".join(md for _, _, md in items)
 
 
 @dataclass
 class GoldDoc:
     text_elems: List[Dict[str, Any]] = field(default_factory=list)
     tables: List[Dict[str, Any]] = field(default_factory=list)
-    equations: List[Dict[str, Any]] = field(default_factory=list)
-    figures: List[Dict[str, Any]] = field(default_factory=list)
     head_input: Any = None
     n_titles: int = 0
     merged_text: List[Dict[str, Any]] = field(default_factory=list)
@@ -398,35 +368,6 @@ def _document_heads(entry: Dict[str, Any]):
     return parent_son, head_nodes
 
 
-def _gold_figures(entry: Dict[str, Any]) -> List[Dict[str, Any]]:
-    pi = entry.get("page_info") or {}
-    widths, heights = pi.get("width") or [], pi.get("height") or []
-    all_pages = sorted({it.get("page_id") for it in entry.get("layout_dets") or []
-                        if it.get("page_id") is not None})
-    rank_of = {p: i for i, p in enumerate(all_pages)}
-    figs = []
-    for det in entry.get("layout_dets") or []:
-        if det.get("category_type") != "figure":
-            continue
-        pid = det.get("page_id")
-        poly = det.get("poly") or []
-        if pid is None or len(poly) < 6:
-            continue
-        idx = pid - 1
-        if not isinstance(widths, list) or idx < 0 or idx >= len(widths) or idx >= len(heights):
-            continue
-        pw, ph = widths[idx], heights[idx]
-        if not pw or not ph:
-            continue
-        figs.append({
-            "page_id": pid,
-            "page_rank": rank_of.get(pid, pid),
-            "bbox_norm": [poly[0] / pw * 1000, poly[1] / ph * 1000,
-                          poly[4] / pw * 1000, poly[5] / ph * 1000],
-        })
-    return figs
-
-
 def build_gold_doc(entry: Dict[str, Any]) -> GoldDoc:
     by_cat, merged = _merge_truncated(entry)
     g = GoldDoc()
@@ -438,20 +379,15 @@ def build_gold_doc(entry: Dict[str, Any]) -> GoldDoc:
             if cat == "table":
                 g.tables.append({"page_id": pid, "order": order, "html": it.get("html", ""),
                                  "is_merged": it.get("is_merged"), "cross_pages": it.get("cross_pages", 1)})
-            elif cat == "equation_isolated":
-                g.equations.append({"page_id": pid, "order": order, "latex": it.get("latex", "")})
             elif cat in GOLD_TEXT_CATEGORIES:
                 g.text_elems.append({"page_id": pid, "order": order, "category": cat,
                                      "text": it.get("text", "")})
     g.tables.sort(key=lambda x: (x["page_id"], x["order"]))
-    g.equations.sort(key=lambda x: (x["page_id"], x["order"]))
     g.text_elems.sort(key=lambda x: (x["page_id"], x["order"]))
 
     parent_son, head_nodes = _document_heads(entry)
     g.head_input = [parent_son, head_nodes]
     g.n_titles = len(head_nodes)
-
-    g.figures = _gold_figures(entry)
 
     g.merged_tables = [m for m in merged if m.get("is_merged") == "table"]
     g.merged_text = [m for m in merged if m.get("is_merged") == "text_block"]
@@ -515,17 +451,6 @@ def match_text(pred: PredDoc, gold: GoldDoc) -> TextMatch:
     return TextMatch(per_page=per_page, n_gold=n_gold, n_pred=n_pred)
 
 
-def score_text(pred: PredDoc, gold: GoldDoc) -> Dict[str, Any]:
-    gold_txt = _norm_text(" ".join(t["text"] for t in gold.text_elems if t.get("text")))
-    pred_txt = _norm_text(" ".join(
-        e.text for e in pred.elements
-        if e.block_type in PRED_TEXT_BLOCK_TYPES and not e.furniture and e.text))
-    dist, upper = _edit(pred_txt, gold_txt)
-    return {"edit_dist": (dist / upper) if upper else 0.0,
-            "score": 1.0 - (dist / upper) if upper else 1.0,
-            "gold_chars": len(gold_txt), "pred_chars": len(pred_txt)}
-
-
 def score_text_diag(match: TextMatch) -> Optional[Dict[str, Any]]:
     if match.n_gold == 0 and match.n_pred == 0:
         return None
@@ -545,41 +470,6 @@ def score_text_diag(match: TextMatch) -> Optional[Dict[str, Any]]:
     f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
     return {"precision": precision, "recall": recall, "f1": f1,
             "n_gold": match.n_gold, "n_pred": match.n_pred, "n_true_matches": true_matches}
-
-
-def score_equations_diag(pred: PredDoc, gold: GoldDoc) -> Optional[Dict[str, Any]]:
-    if not gold.equations:
-        return None
-    pred_eqs = [e.latex for e in pred.elements if e.block_type == "equation" and e.latex]
-    scores = []
-    for i, ge in enumerate(gold.equations):
-        g = _norm_formula(ge.get("latex", ""))
-        p = _norm_formula(pred_eqs[i]) if i < len(pred_eqs) else ""
-        scores.append(_edit_score(p, g))
-    return {"score": sum(scores) / len(scores) if scores else 0.0,
-            "n_gold": len(gold.equations), "n_pred": len(pred_eqs)}
-
-
-def score_equations(pred: PredDoc, gold: GoldDoc, doc: str = "",
-                    work_dir: Optional[Path] = None) -> Optional[Dict[str, Any]]:
-    if not gold.equations:
-        return None
-    if config.EQUATION_METRIC == "cdm" and cdm_formula.cdm_available():
-        try:
-            pred_eqs = [e.latex for e in pred.elements if e.block_type == "equation" and e.latex]
-            wd = Path(work_dir) if work_dir is not None else (config.RUNS_DIR / "_cdm_work")
-            r = cdm_formula.score(gold.equations, pred_eqs, doc or "doc", wd)
-            f1s = r["pair_f1"]
-            return {"score": (sum(f1s) / len(f1s)) if f1s else 0.0,
-                    "n_gold": len(gold.equations), "n_pred": len(pred_eqs),
-                    "n_pairs": r["n_pairs"], "sum_f1": float(sum(f1s)),
-                    "precision": (sum(r["precision"]) / len(r["precision"])) if r["precision"] else 0.0,
-                    "recall": (sum(r["recall"]) / len(r["recall"])) if r["recall"] else 0.0,
-                    "method": "cdm"}
-        except Exception as exc:
-            print(f"[cdm_formula] CDM scoring failed for {doc!r} ({exc}); falling back to edit distance")
-    diag = score_equations_diag(pred, gold)
-    return {**diag, "method": "edit"} if diag is not None else None
 
 
 @dataclass
@@ -652,48 +542,6 @@ def score_heads(pred: PredDoc, gold: GoldDoc) -> Optional[Dict[str, Any]]:
                 "n_pred_heads": len(pred.head_md)}
     return {"score": float(score), "gt_depth": int(depth),
             "n_gold_titles": gold.n_titles, "n_pred_heads": len(pred.head_md)}
-
-
-def score_figures(pred: PredDoc, gold: GoldDoc, iou_threshold: float = 0.5) -> Optional[Dict[str, Any]]:
-    if not gold.figures:
-        return None
-    from collections import defaultdict
-    gt_by_rank: Dict[int, List[Tuple[int, List[float]]]] = defaultdict(list)
-    for i, f in enumerate(gold.figures):
-        gt_by_rank[f["page_rank"]].append((i, f["bbox_norm"]))
-    pred_by_rank: Dict[int, List[Tuple[int, List[float]]]] = defaultdict(list)
-    for j, f in enumerate(pred.figures):
-        pred_by_rank[f["page_rank"]].append((j, f["bbox_norm"]))
-
-    pairs = []
-    for rank, gts in gt_by_rank.items():
-        for gi, gbox in gts:
-            for pj, pbox in pred_by_rank.get(rank, []):
-                iou = _compute_iou(gbox, pbox)
-                if iou >= iou_threshold:
-                    pairs.append((gi, pj, iou))
-    pairs.sort(key=lambda x: x[2], reverse=True)
-    m_gt, m_pred = set(), set()
-    for gi, pj, _ in pairs:
-        if gi not in m_gt and pj not in m_pred:
-            m_gt.add(gi)
-            m_pred.add(pj)
-    gt_count, pred_count, matched = len(gold.figures), len(pred.figures), len(m_gt)
-    precision = matched / pred_count if pred_count else 0.0
-    recall = matched / gt_count if gt_count else 0.0
-    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
-    return {"f1": f1, "precision": precision, "recall": recall,
-            "gt_count": gt_count, "pred_count": pred_count, "matched": matched}
-
-
-def _compute_iou(a: List[float], b: List[float]) -> float:
-    xl, yt = max(a[0], b[0]), max(a[1], b[1])
-    xr, yb = min(a[2], b[2]), min(a[3], b[3])
-    inter = max(0.0, xr - xl) * max(0.0, yb - yt)
-    area_a = (a[2] - a[0]) * (a[3] - a[1])
-    area_b = (b[2] - b[0]) * (b[3] - b[1])
-    union = area_a + area_b - inter
-    return inter / union if union > 0 else 0.0
 
 
 def score_reading_order(match: TextMatch) -> Dict[str, Any]:
@@ -829,8 +677,7 @@ def score_table_diag(match: TableMatch) -> Optional[Dict[str, Any]]:
             "n_true_matches": true_matches, "n_assigned": len(match.pair_teds)}
 
 
-def evaluate_doc(doc: str, fd: Dict[str, Any], gold_entry: Dict[str, Any],
-                 work_dir: Optional[Path] = None) -> Dict[str, Any]:
+def evaluate_doc(doc: str, fd: Dict[str, Any], gold_entry: Dict[str, Any]) -> Dict[str, Any]:
     pred = build_pred_doc(fd, doc)
     gold = build_gold_doc(gold_entry)
     match = match_tables(pred, gold)
@@ -838,25 +685,21 @@ def evaluate_doc(doc: str, fd: Dict[str, Any], gold_entry: Dict[str, Any],
     text_match = match_text(pred, gold)
     return {
         "doc": doc,
-        "text": score_text(pred, gold),
+        "text": official_text_edit.score(gold_entry, pred_markdown(fd),
+                                         os.path.basename((gold_entry.get("page_info") or {}).get("image_path", ""))),
         "text_diag": score_text_diag(text_match),
-        "equation": score_equations(pred, gold, doc, work_dir),
-        "equation_diag": score_equations_diag(pred, gold),
         "table": score_tables(pred, gold, match),
         "table_diag": score_table_diag(match),
         "heads": score_heads(pred, gold),
-        "figures": score_figures(pred, gold),
         "reading_order": score_reading_order(text_match),
         "merged_text": score_merged_text(pred, gold),
         "merged_table": score_merged_table(pred, gold),
         "relation": score_relation(pred, gold_entry),
         "counts": {
             "gold": {"text": len(gold.text_elems), "tables": len(gold.tables),
-                     "equations": len(gold.equations), "figures": len(gold.figures),
                      "titles": gold.n_titles, "merged_text": len(gold.merged_text),
                      "merged_tables": len(gold.merged_tables)},
-            "pred": {"elements": len(pred.elements), "figures": len(pred.figures),
-                     "heads": len(pred.head_md)},
+            "pred": {"elements": len(pred.elements), "heads": len(pred.head_md)},
         },
     }
 
@@ -864,13 +707,10 @@ def evaluate_doc(doc: str, fd: Dict[str, Any], gold_entry: Dict[str, Any],
 _PRIMARY = [
     ("text", ["text", "score"]),
     ("text_diag_f1", ["text_diag", "f1"]),
-    ("equation", ["equation", "score"]),
-    ("equation_diag", ["equation_diag", "score"]),
     ("table", ["table", "teds"]),
     ("table_struct", ["table", "teds_struct"]),
     ("table_diag_f1", ["table_diag", "f1"]),
     ("heads", ["heads", "score"]),
-    ("figure_f1", ["figures", "f1"]),
     ("reading_order", ["reading_order", "score"]),
     ("merged_text", ["merged_text", "score"]),
     ("merged_table", ["merged_table", "teds"]),
@@ -900,24 +740,12 @@ def _micro(docs: List[Dict[str, Any]], metric: str) -> Optional[float]:
     return (1.0 - num / den) if den else None
 
 
-def _equation_micro(docs: List[Dict[str, Any]]) -> Optional[float]:
-    eqs = [d["equation"] for d in docs if d.get("equation")]
-    if not eqs or not all(e.get("method") == "cdm" and "n_pairs" in e for e in eqs):
-        return None
-    num = sum(float(e.get("sum_f1", 0.0)) for e in eqs)
-    den = sum(int(e.get("n_pairs", 0)) for e in eqs)
-    return (num / den) if den else None
-
-
 def _aggregate(per_doc: List[Dict[str, Any]], domain_of: Dict[str, str]) -> Dict[str, Any]:
     overall: Dict[str, Optional[float]] = {}
     for name, path in _PRIMARY:
         overall[name] = _mean([v for v in (_dig(d, path) for d in per_doc) if v is not None])
     for m in _MICRO_METRICS:
         overall[m] = _micro(per_doc, m)
-    _eqm = _equation_micro(per_doc)
-    if _eqm is not None:
-        overall["equation"] = _eqm
     by_domain: Dict[str, Dict[str, Optional[float]]] = {}
     for d in per_doc:
         by_domain.setdefault(domain_of.get(d["doc"], "unknown"), {})
@@ -927,15 +755,7 @@ def _aggregate(per_doc: List[Dict[str, Any]], domain_of: Dict[str, str]) -> Dict
             by_domain[dom][name] = _mean([v for v in (_dig(x, path) for x in docs) if v is not None])
         for m in _MICRO_METRICS:
             by_domain[dom][m] = _micro(docs, m)
-        _eqm_d = _equation_micro(docs)
-        if _eqm_d is not None:
-            by_domain[dom]["equation"] = _eqm_d
     return {"overall": overall, "by_domain": by_domain, "n_docs": len(per_doc)}
-
-
-def _resolve_cdm_work_dir(run_dir: Path) -> Path:
-    override = getattr(config, "EQUATION_CDM_WORK_DIR", None)
-    return Path(override) if override else run_dir / "_mpdocbench" / "_cdm_work"
 
 
 def evaluate_run(run_dir: Path) -> Dict[str, Any]:
@@ -949,7 +769,6 @@ def evaluate_run(run_dir: Path) -> Dict[str, Any]:
         fd_paths = sorted(run_dir.glob("*/final_document.json"))
         single = True
 
-    cdm_work = _resolve_cdm_work_dir(run_dir)
     by_model: Dict[str, List[Dict[str, Any]]] = {}
     skipped: List[str] = []
     for fd_path in fd_paths:
@@ -964,7 +783,7 @@ def evaluate_run(run_dir: Path) -> Dict[str, Any]:
         except (ValueError, OSError):
             skipped.append(doc)
             continue
-        by_model.setdefault(model, []).append(evaluate_doc(doc, fd, gold_entry, cdm_work))
+        by_model.setdefault(model, []).append(evaluate_doc(doc, fd, gold_entry))
 
     results = {"run": run_dir.name, "skipped_no_gold": sorted(set(skipped)), "models": {}}
     for model, per_doc in by_model.items():
@@ -983,22 +802,9 @@ def evaluate_run(run_dir: Path) -> Dict[str, Any]:
 
 _METRIC_LABELS = [
     ("text", "Text"), ("text_diag_f1", "TxtDiagF1"), ("table", "Table"), ("heads", "Heading"),
-    ("figure_f1", "Figure"), ("equation", "Equation"), ("equation_diag", "EqDiag"),
     ("reading_order", "ReadOrder"), ("merged_text", "MrgText"), ("merged_table", "MrgTable"),
     ("table_diag_f1", "TblDiagF1"),
 ]
-
-
-def _equation_method(per_doc: List[Dict[str, Any]]) -> Optional[str]:
-    methods = {d["equation"]["method"] for d in per_doc
-               if d.get("equation") and d["equation"].get("method")}
-    if not methods:
-        return None
-    if methods == {"cdm"}:
-        return "cdm"
-    if methods == {"edit"}:
-        return "edit"
-    return "mixed"
 
 
 def _fmt(v: Optional[float]) -> str:
@@ -1016,16 +822,7 @@ def render_weak_spots(results: Dict[str, Any], domain_of: Dict[str, str]) -> str
     for model, mres in results["models"].items():
         agg = mres["aggregate"]
         lines += [f"## Model: {model}  ({agg['n_docs']} docs)", ""]
-        eq_method = _equation_method(mres["per_doc"])
-        eq_label = {"cdm": "Equation(CDM)", "edit": "Equation(edit!)",
-                    "mixed": "Equation(mixed!)"}.get(eq_method, "Equation")
-        labels = [(k, eq_label if k == "equation" else lbl) for k, lbl in _METRIC_LABELS]
-        if eq_method in ("edit", "mixed"):
-            fb = [d["doc"] for d in mres["per_doc"]
-                  if d.get("equation") and d["equation"].get("method") == "edit"]
-            lines += [f"> ⚠ Equation = edit-distance fallback, NOT paper CDM "
-                      f"(CDM toolchain unavailable){' for: ' + ', '.join(sorted(fb)) if fb else ''}. "
-                      f"`EqDiag` is always the edit-distance diagnostic.", ""]
+        labels = list(_METRIC_LABELS)
         header = "| Domain | " + " | ".join(lbl for _, lbl in labels) + " |"
         sep = "|" + "---|" * (len(labels) + 1)
         lines += [header, sep]
@@ -1062,10 +859,6 @@ def _find_struggles(per_doc: List[Dict[str, Any]], domain_of: Dict[str, str]) ->
     for d in per_doc:
         doc = d["doc"]
         dom = domain_of.get(doc, "?")
-        fig = d.get("figures")
-        if fig and fig["gt_count"] >= 3 and fig["recall"] < 0.5:
-            out.append(f"**{doc}** ({dom}): figure recall {fig['recall']:.2f} "
-                       f"({fig['matched']}/{fig['gt_count']} gold figures matched) — layout figure detection gap.")
         tbl = d.get("table")
         if tbl and tbl["n_gold"] >= 2 and tbl["teds"] < 0.5:
             out.append(f"**{doc}** ({dom}): table TEDS {tbl['teds']:.2f} over {tbl['n_gold']} gold "
@@ -1079,9 +872,9 @@ def _find_struggles(per_doc: List[Dict[str, Any]], domain_of: Dict[str, str]) ->
             out.append(f"**{doc}** ({dom}): cross-page table merge {mtb['teds']:.2f} "
                        f"({mtb['n_pred_merges']} pred vs {mtb['n_gold_merges']} gold) — table continuation miss.")
         txt = d.get("text")
-        if txt and txt["gold_chars"] > 200 and txt["score"] < 0.5:
-            out.append(f"**{doc}** ({dom}): text edit score {txt['score']:.2f} "
-                       f"({txt['pred_chars']} pred vs {txt['gold_chars']} gold chars) — text extraction gap.")
+        if txt and txt["upper"] > 200 and txt["score"] < 0.5:
+            out.append(f"**{doc}** ({dom}): text edit {txt['edit_dist']:.2f} "
+                       f"over {txt['n_blocks']} matched text blocks — text extraction gap.")
         tdg = d.get("text_diag")
         if tdg and tdg["n_gold"] >= 5 and tdg["recall"] < 0.6:
             out.append(f"**{doc}** ({dom}): text segmentation recall {tdg['recall']:.2f} "

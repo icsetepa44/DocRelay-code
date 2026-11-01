@@ -2,7 +2,13 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
+from src.core import config
 from src.eval import adapt, evaluate
+
+needs_official = pytest.mark.skipif(not (config.MPDOCBENCH_REPO / "dataset" / "end2end_dataset.py").is_file(),
+                                    reason="official MPDocBench code not downloaded (data/mpdocbench/repo/MPDocBench)")
 
 
 def _write(path: Path, obj) -> Path:
@@ -64,24 +70,19 @@ def _identity_case(tmp_path):
     return _write(tmp_path / "gold.json", gold), fd
 
 
-ORIGINAL_EVALUATOR_METRICS = {
-    "cer_clause_mean": 0.1142, "classification_accuracy": 1.0, "clause_f1": 0.8, "clause_precision": 0.6667,
-    "clause_recall": 1.0, "confusion": {"clause->clause": 2, "metadata->metadata": 2},
-    "doc_edit_similarity": 0.8559, "duplication_ratio": 1.1538, "gold_clauses": 2, "gold_excluded_page_items": 1,
-    "gold_metadata": 2, "gold_tables": 0, "mean_clause_bag_similarity": 0.9483,
-    "mean_clause_edit_similarity": 0.8859, "mean_clause_text_similarity": 0.9483, "missed_gold_items": 0,
-    "over_segmentation_factor": 1.5, "pred_clauses": 3, "pred_metadata": 2, "soft_clause_f1": 0.7682,
-    "soft_clause_precision": 0.6781, "soft_clause_recall": 0.8859, "spurious_pred_items": 1,
-    "table_cell_recall": None, "table_grits_con": None, "table_grits_top": None, "table_teds": None,
-    "table_teds_struct": None, "token_coverage": 0.9038, "wer_clause_mean": 0.0938, "wer_document": 0.2692,
-}
+ORIGINAL_EVALUATOR_METRICS = {"gold_clauses": 2, "gold_metadata": 2, "gold_tables": 0, "table_teds": None}
 
 
+def _without_text_edit(m):
+    return {k: v for k, v in m.items() if k != "text_edit"}
+
+
+@needs_official
 def test_regression_identity_with_the_original_evaluator(tmp_path):
     gold_path, fd = _identity_case(tmp_path)
-    m = evaluate.evaluate_pair(evaluate.load_gold(gold_path), adapt.adapt_final_document(fd))
-    for k, v in ORIGINAL_EVALUATOR_METRICS.items():
-        assert m[k] == v, f"{k}: original {v} != now {m[k]}"
+    m = evaluate.evaluate_pair(evaluate.load_gold(gold_path), adapt.adapt_final_document(fd), "docA")
+    assert _without_text_edit(m) == ORIGINAL_EVALUATOR_METRICS
+    assert 0.0 < m["text_edit"]["edit_dist"] < 1.0 and m["text_edit"]["n_blocks"] >= 3
 
 
 def _tree_hash(root: Path) -> dict:
@@ -100,6 +101,7 @@ def _tiny_run(tmp_path, legacy=False):
     return run, gold_root
 
 
+@needs_official
 def test_run_is_read_only_on_inputs_and_writes_only_eval(tmp_path):
     run, gold_root = _tiny_run(tmp_path)
     before_run, before_gold = _tree_hash(run), _tree_hash(gold_root)
@@ -111,12 +113,14 @@ def test_run_is_read_only_on_inputs_and_writes_only_eval(tmp_path):
     assert {k: v for k, v in _tree_hash(run).items() if not k.startswith("_eval/")} == before_run
     metrics = json.loads((run / "_eval" / "metrics.json").read_text(encoding="utf-8"))
     assert metrics["evaluator"] == evaluate.EVALUATOR_VERSION
-    assert metrics["results"]["m"]["docA"]["soft_clause_f1"] == ORIGINAL_EVALUATOR_METRICS["soft_clause_f1"]
+    assert _without_text_edit(metrics["results"]["m"]["docA"]) == ORIGINAL_EVALUATOR_METRICS
+    assert metrics["results"]["m"]["docA"]["text_edit"]["n_blocks"] >= 3
     assert (run / "_eval" / "final_documents" / "docA" / "m" / "final_stitched_document.json").exists()
     assert sorted(p.name for p in (run / "_eval").iterdir()) == [
         "final_documents", "integrity.json", "metrics.json", "summary.md"]
 
 
+@needs_official
 def test_legacy_single_model_layout(tmp_path):
     run, gold_root = _tiny_run(tmp_path, legacy=True)
     out = evaluate.evaluate_run(run, gold_root=gold_root, workers=1)

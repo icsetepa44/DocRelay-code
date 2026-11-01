@@ -70,21 +70,6 @@ page_underproduction:
   min_coverage: 0.3        # flag only when emitted blocks cover < this fraction of the page's OCR text (table-aware; real bail-outs sit <=0.11, well below this)
   max_retries: 1           # corrective re-extractions per flagged page
 
-eval:
-  # Formula/equation scorer. "cdm" = paper-faithful Character Detection Matching: the adapter
-  # (src/eval/cdm_formula.py) reuses the paper's OWN formula matcher (utils.match.match_gt2pred_simple)
-  # and CDM scorer (metrics.cdm_metric.CDM.evaluate) UNCHANGED, fed by our equations + the gold. CDM needs
-  # the render toolchain (xelatex + ImageMagick + node + Source Han Sans SC) — available under WSL; when it
-  # is missing the metric falls back to "edit" and is labelled honestly. "edit" = per-equation LaTeX edit
-  # distance (our toolchain-free diagnostic, always ALSO reported as `equation_diag`).
-  equation_metric: cdm
-  equation_cdm_keep_artifacts: false   # keep CDM render intermediates (_cdm_work/) for debugging
-  # Override the CDM render-scratch dir. The vendored renderer shells out to xelatex/ImageMagick with
-  # UNQUOTED paths, so a scratch dir under a path containing spaces (this repo's location) silently fails
-  # every render -> F1 0. Point at a space-free dir (e.g. /tmp/mpdocbench_cdm_work under WSL) to run CDM
-  # from such a checkout. Blank/null -> default under the run dir (<run>/_mpdocbench/_cdm_work).
-  equation_cdm_work_dir:
-
 # --- v1 stable-core additions (not part of spec §7) ---
 
 inputs:

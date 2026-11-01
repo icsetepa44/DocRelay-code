@@ -27,6 +27,9 @@ Get the corpus from its release (see the paper). Put each document's PDF in `pdf
 two names must match: `<name>.pdf` and `<name>_output.json`. Then make the OCR (see the main README), or put an
 existing Chandra OCR tree in `ocr/`.
 
+TIDE's Text Edit runs the official MPDocBench evaluation code. Get it as in step 1 below; the MPDocBench page images
+are not needed for TIDE.
+
 ## MPDocBench-Parse
 
 1. **Official code and gold.** This is the Tongyi-Zhiwen/Qwen-Doc repository, Apache-2.0. The evaluator imports its

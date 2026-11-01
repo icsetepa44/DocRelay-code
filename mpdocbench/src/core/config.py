@@ -108,15 +108,6 @@ SCHEDULE_MAX_ITEM_CHARS: int = int(_sched.get("max_item_chars", 160))
 USE_SUPERVALIDATOR: bool = bool(PIPELINE.get("use_supervalidator", True))
 SKIP_VERIFIER_AND_DECIDER: bool = bool(PIPELINE.get("skip_verifier_and_decider", False))
 
-_eval = PIPELINE.get("eval", {})
-EQUATION_METRIC: str = str(_eval.get("equation_metric", "cdm")).strip().lower()
-if EQUATION_METRIC not in ("cdm", "edit"):
-    EQUATION_METRIC = "cdm"
-EQUATION_CDM: bool = EQUATION_METRIC == "cdm"
-EQUATION_CDM_KEEP_ARTIFACTS: bool = bool(_eval.get("equation_cdm_keep_artifacts", False))
-_cdm_wd = _eval.get("equation_cdm_work_dir") or None
-EQUATION_CDM_WORK_DIR: Optional[str] = str(_cdm_wd) if _cdm_wd else None
-
 _inputs = PIPELINE.get("inputs", {})
 OCR_INPUT_FORMAT: str = str(_inputs.get("ocr_format", "mixed")).strip().lower()
 if OCR_INPUT_FORMAT not in ("markdown", "html", "both", "mixed"):

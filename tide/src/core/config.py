@@ -24,6 +24,7 @@ CORPUS_ROOT: Path = REPO_ROOT / "data" / "tide"
 BENCHMARK_GOLD_ROOT: Path = CORPUS_ROOT / "json"
 BENCHMARK_PDF_ROOT: Path = CORPUS_ROOT / "pdf"
 BENCHMARK_OCR_PARENT: Path = CORPUS_ROOT / "ocr"
+MPDOCBENCH_REPO: Path = REPO_ROOT / "data" / "mpdocbench" / "repo" / "MPDocBench"
 
 
 def _load_env() -> None:
