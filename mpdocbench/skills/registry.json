@@ -1,0 +1,13 @@
+{
+  "skills": [
+    { "skill_id": "text_block", "latest_version": 1, "status": "main", "record": "records/text_block/v0001.json" },
+    { "skill_id": "heading", "latest_version": 1, "status": "main", "record": "records/heading/v0001.json" },
+    { "skill_id": "table", "latest_version": 2, "status": "main", "record": "records/table/v0002.json" },
+    { "skill_id": "figure", "latest_version": 1, "status": "main", "record": "records/figure/v0001.json" },
+    { "skill_id": "equation", "latest_version": 1, "status": "main", "record": "records/equation/v0001.json" },
+    { "skill_id": "caption", "latest_version": 1, "status": "main", "record": "records/caption/v0001.json" },
+    { "skill_id": "list", "latest_version": 1, "status": "main", "record": "records/list/v0001.json" },
+    { "skill_id": "code", "latest_version": 1, "status": "main", "record": "records/code/v0001.json" },
+    { "skill_id": "header_footer_page_number", "latest_version": 1, "status": "main", "record": "records/header_footer_page_number/v0001.json" }
+  ]
+}

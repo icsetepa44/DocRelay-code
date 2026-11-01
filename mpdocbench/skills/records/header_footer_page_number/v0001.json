@@ -1,0 +1,21 @@
+{
+  "skill_id": "header_footer_page_number",
+  "version": 1,
+  "status": "main",
+  "description": "Recognizes running page furniture as ONE header_footer_page_number block: a running header/footer, a page number, or a repeated masthead line that is NOT document content.",
+  "applicability": [
+    "The region is a running header or footer, a page number, or a repeated masthead / running title in the top or bottom margin.",
+    "It repeats across pages and is not part of the body content."
+  ],
+  "instructions": [
+    "Emit running headers, footers, and page numbers as block_type header_footer_page_number, kept non-content and in reading order.",
+    "Do NOT merge a running header/footer into an adjacent heading or paragraph, and do NOT promote a page number to a heading or a body block.",
+    "Keep this furniture out of the body's parent-child structure (parent_block_id null)."
+  ],
+  "conflicts_with": [],
+  "provenance": {
+    "parent_skills": [{ "skill_id": "document_metadata", "version": 1 }],
+    "created_from_failures": [],
+    "reason": "General-document adaptation (MPDocBench): page furniture (header/footer/page number) is non-content; generalized from the legal document_metadata skill."
+  }
+}

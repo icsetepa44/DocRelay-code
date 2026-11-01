@@ -1,0 +1,11 @@
+[project]
+name = "docrelay-mpdocbench"
+version = "1.0.0"
+description = "DocRelay extraction pipeline and evaluation for MPDocBench-Parse"
+requires-python = ">=3.11"
+# Dependencies: see requirements.txt (and requirements-ocr.txt for OCR) at the repository root.
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"

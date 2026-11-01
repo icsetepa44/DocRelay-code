@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PageValidation",
+  "description": "Reference spec — NOT enforced at runtime (see src/llm/structured_output.py request_json).",
+  "type": "object",
+  "required": ["page_number", "status", "issues"],
+  "properties": {
+    "page_number": { "type": "integer" },
+    "status": { "enum": ["pass", "fail"] },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "description"],
+        "properties": {
+          "block_ids": { "type": "array", "items": { "type": "string" } },
+          "type": {
+            "enum": [
+              "missing_content",
+              "duplicated_content",
+              "wrong_reading_order",
+              "wrong_block_type",
+              "wrong_relationship",
+              "broken_hierarchy",
+              "table_structure_error",
+              "continuation_error",
+              "unrelated_content_merged",
+              "logical_unit_split",
+              "other"
+            ]
+          },
+          "description": { "type": "string" }
+        }
+      }
+    }
+  }
+}

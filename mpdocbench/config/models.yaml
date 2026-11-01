@@ -1,0 +1,48 @@
+# Backend + model (+ vision capability) per pipeline role.
+# All roles inherit `default` for any field they don't set. IDs verified on OpenRouter
+# /models. `vision: true` means the model accepts the page image; text-only models
+# (vision:false) run on OCR markdown+html only (the image is simply not sent).
+#
+# Open-source models only (per project preference). Vision support varies:
+#   google/gemma-4-31b-it         vision  (default; used by all fixed roles + an extractor)
+#   qwen/qwen3-vl-30b-a3b-instruct vision  262K ctx — region_analyzer (grounded 0-1000 coords,
+#                                         matches Chandra); multi-provider (not Alibaba-only), so
+#                                         the Bangla filter below is N/A for English MPDocBench.
+#   qwen/qwen3.7-flash            vision  1M ctx — Alibaba-only host; Alibaba's input filter
+#                                         rejects some Bangla pages (HTTP 400 data_inspection)
+#   mistralai/mistral-small-3.2-24b-instruct  vision  — EU-hosted, multilingual
+#   deepseek/deepseek-v4-flash-0731  text ~$0.09/$0.18  1M ctx
+#   (other non-Alibaba vision open models: google/gemma-3-27b-it, google/gemma-3-12b-it)
+#   For BANGLA/legal docs, AVOID qwen2.5-vl-72b and Alibaba-only qwen/* — same Bangla filter.
+#   (English MPDocBench is unaffected; qwen3-vl-30b-a3b above is multi-provider anyway.)
+
+# Same models as the TIDE pipeline: gemma for every stage, deepseek for the SuperValidator (page verifier) +
+# FinalDecider (page corrector); per-model precision pin via `quantizations` (sent only when pipeline.yaml
+# openrouter.use_quantizations is true).
+default:
+  backend: openrouter
+  model: google/gemma-4-31b-it
+  vision: true
+  quantizations: [bf16, fp16]
+
+roles:
+  # Non-extractor agents are FIXED across all extractor runs, so the extractor is the
+  # only variable being compared. They inherit the vision-capable default.
+  # The region analyzer also receives the Chandra layout boxes of the page.
+  region_analyzer: {}   # used when retrieval.mode == "region"
+  skill_router: {}
+  super_validator: { backend: openrouter, model: deepseek/deepseek-v4.1-flash, vision: true, quantizations: [fp8] }
+  final_decider:   { backend: openrouter, model: deepseek/deepseek-v4.1-flash, vision: true, quantizations: [fp8] }
+  validator: {}
+  continuation_judge: {}
+  final_validator: {}
+
+  # The SuperValidator/FinalDecider roles are used when pipeline.yaml use_supervalidator is true;
+  # validator/continuation_judge only on the legacy path (use_supervalidator: false).
+  # The extractor is run once per model in this list, concurrently. Each entry may set
+  # its own `vision` (default false) and `backend`. A bare string is also accepted.
+  extractor:
+    models:
+      - { model: google/gemma-4-31b-it, vision: true }
+      # - { model: qwen/qwen3.6-35b-a3b, vision: true, quantizations: null }   # v2-run A/B extractor
+      # - { model: z-ai/glm-5.3-flash, vision: true }

@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SuperValidationResult",
+  "type": "object",
+  "required": ["page_number", "status", "issues", "continuation_review"],
+  "properties": {
+    "page_number": { "type": "integer" },
+    "status": {
+      "type": "string",
+      "enum": ["clean", "has_issues"]
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["issue_type", "description"],
+        "properties": {
+          "issue_type": {
+            "type": "string",
+            "enum": [
+              "missing_text",
+              "wrong_hierarchy",
+              "wrong_block_type",
+              "split_clause",
+              "merged_clause",
+              "continuation_ambiguity",
+              "noise_as_content"
+            ]
+          },
+          "target_block_id": { "type": ["string", "null"] },
+          "description": { "type": "string" },
+          "suggested_fix": { "type": "string" }
+        }
+      }
+    },
+    "continuation_review": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["block_id", "decision"],
+        "properties": {
+          "block_id": { "type": "string" },
+          "stitch_id": { "type": ["string", "null"] },
+          "decision": { "enum": ["continues", "ends", "uncertain"] },
+          "is_main_point": { "type": ["boolean", "null"] },
+          "expected_next_main_point": { "type": ["string", "null"] },
+          "evidence": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

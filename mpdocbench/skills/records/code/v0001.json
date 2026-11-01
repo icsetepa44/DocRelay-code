@@ -1,0 +1,21 @@
+{
+  "skill_id": "code",
+  "version": 1,
+  "status": "main",
+  "description": "Represents a code block / program listing as ONE code block, preserving its verbatim text and formatting.",
+  "applicability": [
+    "The region is source code, a program listing, a command/terminal snippet, or pseudo-code (often monospaced / fenced).",
+    "Whitespace and line breaks are significant."
+  ],
+  "instructions": [
+    "Emit each code block as ONE block of block_type code, preserving the code VERBATIM including indentation and line breaks; do not reflow or 'fix' it.",
+    "Keep the whole listing as one block; do NOT split it across sibling blocks by line, and do NOT treat code lines as list items or paragraphs.",
+    "Never paraphrase or summarize code into prose."
+  ],
+  "conflicts_with": [],
+  "provenance": {
+    "parent_skills": [],
+    "created_from_failures": [],
+    "reason": "General-document adaptation (MPDocBench): technical documents contain code blocks that must be preserved verbatim."
+  }
+}

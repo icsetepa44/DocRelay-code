@@ -1,0 +1,22 @@
+{
+  "skill_id": "quoted_text",
+  "version": 1,
+  "status": "main",
+  "description": "Represents a quoted, cited, or amended excerpt (text set off as a quotation of other text) as a single unit.",
+  "applicability": [
+    "The page contains a BLOCK-LEVEL quoted passage, a citation, or an amendment that quotes/inserts other text, set off from the surrounding prose.",
+    "The excerpt is visually or grammatically distinct from the statement that introduces it.",
+    "This does NOT apply to inline quoted defined-terms or English glosses inside a definition — those stay part of their point, not a separate quote."
+  ],
+  "instructions": [
+    "Keep the entire quoted excerpt together as one block; if it is introduced by a point, make it a child of that point.",
+    "Do not split the quotation into unrelated blocks, and do not merge it with the surrounding non-quoted text as if it were the same statement.",
+    "Preserve the quotation's own internal structure (if the quoted text itself contains numbering, keep that numbering verbatim inside the quote)."
+  ],
+  "conflicts_with": [],
+  "provenance": {
+    "parent_skills": [],
+    "created_from_failures": [],
+    "reason": "Initial manually authored skill."
+  }
+}

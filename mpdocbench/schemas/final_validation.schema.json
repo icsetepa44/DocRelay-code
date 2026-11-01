@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FinalValidation",
+  "type": "object",
+  "required": ["document_id", "status", "issues"],
+  "properties": {
+    "document_id": { "type": "string" },
+    "status": { "enum": ["pass", "fail"] },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "description"],
+        "properties": {
+          "unit_ids": { "type": "array", "items": { "type": "string" } },
+          "type": { "type": "string" },
+          "description": { "type": "string" }
+        }
+      }
+    }
+  }
+}

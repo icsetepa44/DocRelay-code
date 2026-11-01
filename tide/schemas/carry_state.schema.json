@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CarryState",
+  "description": "Reference spec — NOT enforced at runtime (see src/llm/structured_output.py request_json).",
+  "type": "object",
+  "required": ["from_page", "open_units"],
+  "properties": {
+    "from_page": { "type": "integer" },
+    "open_units": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["stitch_id", "last_block_id", "block_type", "state", "continuation_evidence", "skills"],
+        "properties": {
+          "stitch_id": { "type": "string" },
+          "last_block_id": { "type": "string" },
+          "block_type": { "type": "string" },
+          "state": { "type": "string" },
+          "open_text": { "type": "string" },
+          "continuation_evidence": { "type": "array", "items": { "type": "string" } },
+          "is_main_point": { "type": "boolean" },
+          "expected_next_main_point": { "type": ["string", "null"] },
+          "continuation_hint": { "type": ["string", "null"] },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["skill_id", "version"],
+              "properties": {
+                "skill_id": { "type": "string" },
+                "version": { "type": "integer" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

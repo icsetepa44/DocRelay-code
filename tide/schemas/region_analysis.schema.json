@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RegionAnalysis",
+  "type": "object",
+  "required": ["page_number", "regions"],
+  "properties": {
+    "page_number": { "type": "integer" },
+    "regions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["region_id", "description"],
+        "properties": {
+          "region_id": { "type": "string" },
+          "description": { "type": "string" },
+          "source_reference": {
+            "type": "object",
+            "properties": {
+              "markdown": { "type": ["string", "null"] },
+              "html": { "type": ["string", "null"] }
+            }
+          },
+          "continuation_context": {
+            "type": ["object", "null"],
+            "properties": { "stitch_id": { "type": "string" } }
+          }
+        }
+      }
+    }
+  }
+}

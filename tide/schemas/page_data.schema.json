@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PageData",
+  "description": "Reference spec — NOT enforced at runtime (see src/llm/structured_output.py request_json).",
+  "type": "object",
+  "required": ["document_id", "page_number", "page_image", "markdown", "html"],
+  "properties": {
+    "document_id": { "type": "string" },
+    "page_number": { "type": "integer", "minimum": 0 },
+    "page_image": { "type": "string" },
+    "markdown": { "type": "string" },
+    "html": { "type": "string" }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ContinuationDecision",
+  "type": "object",
+  "required": ["page_number", "decisions"],
+  "properties": {
+    "page_number": { "type": "integer" },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["block_id", "decision"],
+        "properties": {
+          "block_id": { "type": "string" },
+          "stitch_id": { "type": ["string", "null"] },
+          "decision": { "enum": ["continues", "ends", "uncertain"] },
+          "evidence": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,43 @@
+# Backend + model (+ vision capability) per pipeline role.
+# All roles inherit `default` for any field they don't set. IDs verified on OpenRouter
+# /models. `vision: true` means the model accepts the page image; text-only models
+# (vision:false) run on OCR markdown+html only (the image is simply not sent).
+#
+# Open-source models only (per project preference). Vision support varies:
+#   google/gemma-4-31b-it         vision  (default; used by all fixed roles + an extractor)
+#   qwen/qwen3.7-flash            vision  1M ctx — Alibaba-only host; Alibaba's input filter
+#                                         rejects some Bangla pages (HTTP 400 data_inspection)
+#   mistralai/mistral-small-3.2-24b-instruct  vision  — EU-hosted, multilingual
+#   deepseek/deepseek-v4-flash-0731  text ~$0.09/$0.18  1M ctx
+#   deepseek/deepseek-v4.1-flash     vision (text+image)  — used by super_validator + final_decider
+#   (other non-Alibaba vision open models: google/gemma-3-27b-it, google/gemma-3-12b-it)
+#   AVOID qwen2.5-vl-72b and other qwen/* for fixed roles — same Alibaba Bangla filter.
+
+default:
+  backend: openrouter
+  model: google/gemma-4-31b-it
+  vision: true
+  # Per-model precision pin (OpenRouter provider.quantizations), applied only when
+  # openrouter.use_quantizations is true. gemma has bf16 hosts (Crusoe/Novita), so the
+  # default is full precision. A model with no bf16/fp16 host must widen this (see below).
+  quantizations: [bf16, fp16]
+
+roles:
+  # Non-extractor agents are FIXED across all extractor runs, so the extractor is the
+  # only variable being compared. They inherit the vision-capable default.
+  region_analyzer: {}   # used only when retrieval.mode == "region"
+  skill_router: {}
+  # deepseek-v4.1-flash has NO bf16/fp16 host on OpenRouter (only fp8/fp4), so these two
+  # widen the pin to allow fp8 — full precision if it ever appears, else fp8, never fp4.
+  # Without fp8 here, use_quantizations:true would 404 these roles (no matching endpoint).
+  super_validator: { backend: openrouter, model: deepseek/deepseek-v4.1-flash, vision: true, quantizations: [fp8] }
+  final_decider:   { backend: openrouter, model: deepseek/deepseek-v4.1-flash, vision: true, quantizations: [fp8] }
+  validator: {}
+  continuation_judge: {}
+  final_validator: {}
+
+  # The extractor is run once per model in this list, concurrently. Each entry may set
+  # its own `vision` (default false) and `backend`. A bare string is also accepted.
+  extractor:
+    models:
+      - { model: google/gemma-4-31b-it, vision: true, backend: openrouter }

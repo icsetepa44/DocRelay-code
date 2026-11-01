@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PageExtraction",
+  "type": "object",
+  "required": ["page_number", "blocks"],
+  "properties": {
+    "page_number": { "type": "integer" },
+    "blocks": { "type": "array", "items": { "$ref": "#/$defs/block" } },
+    "continuation": { "$ref": "#/$defs/continuation" }
+  },
+  "$defs": {
+    "skill_ref": {
+      "type": "object",
+      "required": ["skill_id", "version"],
+      "properties": {
+        "skill_id": { "type": "string" },
+        "version": { "type": "integer" }
+      }
+    },
+    "block": {
+      "type": "object",
+      "required": ["block_id", "block_type", "parent_block_id", "stitch_id", "content", "skills_used"],
+      "properties": {
+        "block_id": { "type": "string" },
+        "block_type": { "type": "string" },
+        "parent_block_id": { "type": ["string", "null"] },
+        "stitch_id": { "type": ["string", "null"] },
+        "content": { "type": "object" },
+        "skills_used": { "type": "array", "items": { "$ref": "#/$defs/skill_ref" } }
+      }
+    },
+    "continuation": {
+      "type": "object",
+      "properties": {
+        "page_number": { "type": "integer" },
+        "decisions": { "type": "array", "items": { "$ref": "#/$defs/decision" } }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "required": ["block_id", "decision"],
+      "properties": {
+        "block_id": { "type": "string" },
+        "stitch_id": { "type": ["string", "null"] },
+        "decision": { "enum": ["continues", "ends", "uncertain"] },
+        "evidence": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

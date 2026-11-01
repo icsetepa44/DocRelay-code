@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RegionSkillSelection",
+  "type": "object",
+  "required": ["page_number", "regions"],
+  "properties": {
+    "page_number": { "type": "integer" },
+    "regions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["region_id", "skills", "coverage"],
+        "properties": {
+          "region_id": { "type": "string" },
+          "coverage": { "enum": ["sufficient", "partial", "insufficient"] },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["skill_id", "version"],
+              "properties": {
+                "skill_id": { "type": "string" },
+                "version": { "type": "integer" },
+                "relevance": { "type": "number" },
+                "reason": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

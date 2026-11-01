@@ -1,0 +1,22 @@
+{
+  "skill_id": "figure_or_seal",
+  "version": 1,
+  "status": "main",
+  "description": "Represents an embedded non-text figure as ONE image_or_seal block: a national emblem, government seal or logo, official portrait, commemorative banner image, a scanned stamp or signature image, or an illustrative diagram.",
+  "applicability": [
+    "The source contains an embedded image or figure (in OCR HTML an <img> tag; in OCR markdown an ![...]() image).",
+    "Typical cases: a masthead emblem/seal/logo, an official portrait or commemorative banner, a scanned stamp/seal, or a diagram illustrating a rule."
+  ],
+  "instructions": [
+    "Emit each embedded figure as ONE block of block_type image_or_seal, with a short description of what it depicts.",
+    "If the figure is document furniture (masthead emblem, seal, portrait, banner), keep it non-operative and in reading order.",
+    "If the figure sits inside a point (e.g. a diagram illustrating a rule), attach it to that point via parent_block_id.",
+    "Never transcribe a figure as body text or as a numbered point, and never silently drop it."
+  ],
+  "conflicts_with": [],
+  "provenance": {
+    "parent_skills": [],
+    "created_from_failures": [],
+    "reason": "Manually authored after auditing the source documents: embedded figures/emblems/seals are a distinct structural entity (block_type image_or_seal) that no existing skill owned."
+  }
+}

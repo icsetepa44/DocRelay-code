@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SkillRecord",
+  "description": "Reference spec — NOT enforced at runtime (see src/llm/structured_output.py request_json).",
+  "type": "object",
+  "required": [
+    "skill_id", "version", "status", "description",
+    "applicability", "instructions", "conflicts_with", "provenance"
+  ],
+  "properties": {
+    "skill_id": { "type": "string" },
+    "version": { "type": "integer", "minimum": 1 },
+    "status": { "enum": ["main", "fallback", "candidate", "deprecated"] },
+    "description": { "type": "string" },
+    "applicability": { "type": "array", "items": { "type": "string" } },
+    "instructions": { "type": "array", "items": { "type": "string" } },
+    "conflicts_with": { "type": "array", "items": { "type": "string" } },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "parent_skills": { "type": "array" },
+        "created_from_failures": { "type": "array" },
+        "reason": { "type": "string" }
+      }
+    }
+  }
+}

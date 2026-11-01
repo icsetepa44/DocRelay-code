@@ -1,0 +1,4 @@
+# Only for regenerating the Chandra OCR (tide RUN_OCR, mpdocbench/scripts/ocr_images.py). Needs a GPU.
+# Model: datalab-to/chandra-ocr-2 (downloaded from Hugging Face on first use).
+chandra-ocr[hf]==0.2.0
+opencv-python==4.13.0.92

@@ -1,0 +1,127 @@
+# Pipeline configuration — the values the v1 stable core actually reads at runtime.
+# config.py flattens these into module globals. SINGLE SOURCE OF TRUTH: run.py does not override any
+# pipeline/eval behaviour.
+# Keys read by v1: skill_retrieval.{main_top_k, method, embedding_model,
+#   embedding_query_prefix, embedding_doc_prefix}; retrieval.mode;
+#   continuation.{use_judge_when_uncertain, judge_on_unconfirmed_main_close,
+#   carry_open_text_max_chars, carry_collision_guard}; failure_handling.{unresolved_policy,
+#   min_chars_nontrivial_page, retry_empty_page, max_empty_page_ratio};
+#   schedule_over_segmentation.{collapse, min_run, max_item_chars};
+#   inputs.ocr_format; openrouter.provider; and the rendering + request blocks below.
+
+# Critic-corrector: true = draft extractor -> SuperValidator (page verifier) -> FinalDecider (page corrector,
+# only on a correction-triggering issue). false = the legacy report-only validator + continuation_judge baseline.
+use_supervalidator: true
+# Ablation switch, default false = the full system. true = stay on the critic-corrector path but make NO
+# SuperValidator and NO FinalDecider call ("without post-hoc correction"): the extractor's draft goes straight to
+# the same deterministic continuation step (uncertain -> ends) and the carry.
+skip_verifier_and_decider: false
+
+skill_retrieval:
+  main_top_k: 2
+  # Scorer used to rank/filter candidate skills before the LLM router:
+  #   "keyword"   -> stdlib TF-cosine over skill description+applicability
+  #   "embedding" -> semantic similarity via sentence-transformers (see embedding_model below)
+  # Single source of truth for the scorer (run.py no longer overrides it).
+  method: embedding
+  embedding_model: intfloat/multilingual-e5-small
+  embedding_query_prefix: "query: "      # e5 models require query/passage prefixes
+  embedding_doc_prefix: "passage: "
+
+retrieval:
+  # "page"   -> one page-level query + page-wide router (original path)
+  # "region" -> Region Analyzer -> per-region RAG retrieval -> region-aware router
+  # Flip this + re-run to A/B evaluate whether region-based RAG improves skill retrieval.
+  mode: region
+
+continuation:
+  use_judge_when_uncertain: true
+  # Carry the actual text of a still-open unit across the page boundary (not just the
+  # short state snippet), bounded to this many chars (head+tail kept on overflow).
+  # 0 disables enrichment -> snippet-only (pre-enrichment behavior).
+  carry_open_text_max_chars: 4000
+  # T11 collision guard: require a fresh main to be a plausible successor of an open rule's
+  # expected_next_main_point before it may close that rule. false -> historical "any fresh
+  # main closes it" behaviour. Flip on in a measured run to isolate its effect.
+  carry_collision_guard: false
+
+failure_handling:
+  unresolved_policy: coerce        # legacy path only: "coerce" uncertain->ends (never raises); "stop" aborts a doc
+  min_chars_nontrivial_page: 200   # C2: a page with >= this many chars of OCR is "non-trivial"
+  retry_empty_page: true           # C2: retry a non-trivial page that returned 0 blocks once
+  max_empty_page_ratio: 0.15       # C2: final validation FAILS if more than this fraction of non-trivial pages came back empty
+
+schedule_over_segmentation:
+  # T1/T4 safety net. The detector (over_segmentation.json) always runs; these only govern the
+  # opt-in re-nest collapse of a shredded uniform schedule/appendix run.
+  collapse: false          # re-nest a flagged run under its schedule cover (or first item); never fabricates a table
+  min_run: 4               # minimum consecutive uniform numbered top-level blocks to flag a run
+  max_item_chars: 160      # a run block must be shorter than this to count as a "uniform shred" item (excludes real operative rules)
+
+page_underproduction:
+  # Track 2 page-drop guard. The detector (page_underproduction.json) ALWAYS runs; `retry` governs the
+  # opt-in corrective re-extraction. A page is flagged when the extractor bailed out mid-page:
+  #   regions >= min_regions AND blocks <= max(2, round(block_ratio*regions)) AND coverage < min_coverage
+  # (coverage = table-aware block text chars / OCR chars). Only trips in region mode (needs the region
+  # count). Default OFF so baseline runs stay a pure model comparison; flip on + re-run to measure lift.
+  retry: false             # re-extract a flagged page with a corrective nudge, keep the best-coverage attempt
+  min_regions: 5           # page must have at least this many regions to be eligible (skips near-blank pages)
+  block_ratio: 0.25        # flag when blocks <= max(2, round(block_ratio * regions))
+  min_coverage: 0.3        # flag only when emitted blocks cover < this fraction of the page's OCR text (table-aware; real bail-outs sit <=0.11, well below this)
+  max_retries: 1           # corrective re-extractions per flagged page
+
+eval:
+  # Formula/equation scorer. "cdm" = paper-faithful Character Detection Matching: the adapter
+  # (src/eval/cdm_formula.py) reuses the paper's OWN formula matcher (utils.match.match_gt2pred_simple)
+  # and CDM scorer (metrics.cdm_metric.CDM.evaluate) UNCHANGED, fed by our equations + the gold. CDM needs
+  # the render toolchain (xelatex + ImageMagick + node + Source Han Sans SC) — available under WSL; when it
+  # is missing the metric falls back to "edit" and is labelled honestly. "edit" = per-equation LaTeX edit
+  # distance (our toolchain-free diagnostic, always ALSO reported as `equation_diag`).
+  equation_metric: cdm
+  equation_cdm_keep_artifacts: false   # keep CDM render intermediates (_cdm_work/) for debugging
+  # Override the CDM render-scratch dir. The vendored renderer shells out to xelatex/ImageMagick with
+  # UNQUOTED paths, so a scratch dir under a path containing spaces (this repo's location) silently fails
+  # every render -> F1 0. Point at a space-free dir (e.g. /tmp/mpdocbench_cdm_work under WSL) to run CDM
+  # from such a checkout. Blank/null -> default under the run dir (<run>/_mpdocbench/_cdm_work).
+  equation_cdm_work_dir:
+
+# --- v1 stable-core additions (not part of spec §7) ---
+
+inputs:
+  # Which Chandra OCR format(s) of each page are sent to the LLM stages:
+  #   "markdown" -> prose/reading-order backbone only (cheap)
+  #   "html"     -> preserves merged-cell tables/forms (markdown can't express rowspan/colspan)
+  #   "both"     -> send both (config.py fallback if this key is missing)
+  #   "mixed"    -> markdown prose with tables kept inline as HTML (best of both)
+  # Active value is "mixed". Flip + re-run to A/B test input format.
+  ocr_format: mixed
+  # OCR input root. Unset (default) -> data/mpdocbench/ocr/ (written by scripts/ocr_images.py; flat <doc>/ or
+  # nested <domain>/<doc>/ folders both work). Also read by the evaluator's figure metric (Chandra layout boxes),
+  # so keep the root matched to the run you score. Optional override, relative to this package or absolute, e.g.
+  # one root per language with one run each:
+  # ocr_root: ../data/mpdocbench/ocr_chn
+  ocr_root:
+
+openrouter:
+  # OpenRouter provider routing sent as extra_body.provider on each call (same as the TIDE pipeline).
+  # Two boolean toggles gate the optional constraints — flip true/false, the values stay below:
+  use_provider_order: false    # send `order` (prefer these providers, in this priority)
+  use_quantizations: true      # send the PER-MODEL precision pin from config/models.yaml
+                               # (gemma bf16/fp16, deepseek fp8). Resolved by config.provider_for().
+  provider:
+    order: ["Together", "Hyperbolic", "DeepInfra"]   # applied only when use_provider_order: true
+    allow_fallbacks: true                             # always applied
+    data_collection: "deny"                           # always applied (skip data-logging hosts)
+
+rendering:
+  dpi: 300                          # DPI for the page.png persisted under mpdocbench/data/documents/
+  model_image_max_long_side: 1024   # downsize the copy actually sent to the vision model
+  poppler_path: null                # set if pdf2image can't find Poppler on PATH
+
+request:
+  temperature: 0.0
+  top_p: 0.1
+  max_new_tokens: 16384             # C1: raised from 8192 — long/dense pages were truncating mid-JSON and dropping the whole page
+  timeout_seconds: 600
+  max_retries: 3                    # backoff honours Retry-After + jitter
+  retry_backoff_seconds: 2.0        # base for exponential backoff (2,4,8,16… capped), + jitter

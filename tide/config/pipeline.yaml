@@ -1,0 +1,98 @@
+# Pipeline configuration — the values the v1 stable core actually reads at runtime.
+# config.py flattens these into module globals. This file is the SINGLE SOURCE OF TRUTH for pipeline
+# behaviour: run.py does NOT override these (it holds only run-orchestration params). To change pipeline
+# behaviour, edit here.
+# Keys read by v1: use_supervalidator; skill_retrieval.{main_top_k, method, embedding_model,
+#   embedding_query_prefix, embedding_doc_prefix}; retrieval.mode;
+#   continuation.{use_judge_when_uncertain, judge_on_unconfirmed_main_close,
+#   carry_open_text_max_chars, carry_collision_guard}; failure_handling.{unresolved_policy,
+#   min_chars_nontrivial_page, retry_empty_page, max_empty_page_ratio};
+#   schedule_over_segmentation.{collapse, min_run, max_item_chars};
+#   inputs.ocr_format; openrouter.provider; and the rendering + request blocks below.
+
+# Critic-corrector: true = run the SuperValidator critic + FinalDecider corrector (the active architecture);
+# false = the legacy report-only validator + continuation_judge baseline. Single source of truth (run.py
+# does not set this).
+use_supervalidator: true
+
+skill_retrieval:
+  main_top_k: 2
+  # Scorer used to rank/filter candidate skills before the LLM router:
+  #   "keyword"   -> stdlib TF-cosine over skill description+applicability
+  #   "embedding" -> semantic similarity via sentence-transformers (see embedding_model below)
+  # Single source of truth for the scorer (run.py no longer overrides it).
+  method: embedding
+  embedding_model: intfloat/multilingual-e5-small
+  embedding_query_prefix: "query: "      # e5 models require query/passage prefixes
+  embedding_doc_prefix: "passage: "
+
+retrieval:
+  # "page"   -> one page-level query + page-wide router (original path)
+  # "region" -> Region Analyzer -> per-region RAG retrieval -> region-aware router
+  # Flip this + re-run to A/B evaluate whether region-based RAG improves skill retrieval.
+  mode: region
+
+continuation:
+  use_judge_when_uncertain: true
+  # B2: also invoke the continuation judge when a main point would CLOSE but the next
+  # main number isn't yet visible on the page (an "unconfirmed" close). Set false to
+  # isolate B2's effect when measuring.
+  judge_on_unconfirmed_main_close: true
+  # Carry the actual text of a still-open unit across the page boundary (not just the
+  # short state snippet), bounded to this many chars (head+tail kept on overflow).
+  # 0 disables enrichment -> snippet-only (pre-enrichment behavior).
+  carry_open_text_max_chars: 4000
+  # T11 collision guard: require a fresh main to be a plausible successor of an open rule's
+  # expected_next_main_point before it may close that rule. false -> historical "any fresh
+  # main closes it" behaviour. Flip on in a measured run to isolate its effect.
+  carry_collision_guard: false
+
+failure_handling:
+  unresolved_policy: coerce        # governs unresolved continuation. "coerce": uncertain -> treated as 'ends' (a doc never aborts; what all runs used); "stop": abort the doc. Single source of truth.
+  min_chars_nontrivial_page: 200   # C2: a page with >= this many chars of OCR is "non-trivial"
+  retry_empty_page: true           # C2: retry a non-trivial page that returned 0 blocks once
+  max_empty_page_ratio: 0.15       # C2: final validation FAILS if more than this fraction of non-trivial pages came back empty
+
+schedule_over_segmentation:
+  # T1/T4 safety net. The detector (over_segmentation.json) always runs; these only govern the
+  # opt-in re-nest collapse of a shredded uniform schedule/appendix run.
+  collapse: false          # re-nest a flagged run under its schedule cover (or first item); never fabricates a table
+  min_run: 4               # minimum consecutive uniform numbered top-level blocks to flag a run
+  max_item_chars: 160      # a run block must be shorter than this to count as a "uniform shred" item (excludes real operative rules)
+
+# --- v1 stable-core additions (not part of spec §7) ---
+
+inputs:
+  # Which Chandra OCR format(s) of each page are sent to the LLM stages:
+  #   "markdown" -> prose/reading-order backbone only (cheap)
+  #   "html"     -> preserves merged-cell tables/forms (markdown can't express rowspan/colspan)
+  #   "both"     -> send both (config.py fallback if this key is missing)
+  #   "mixed"    -> markdown prose with tables kept inline as HTML (best of both)
+  # Active value is "mixed". Flip + re-run to A/B test input format.
+  ocr_format: mixed
+
+openrouter:
+  # OpenRouter provider routing sent as extra_body.provider on each call.
+  # Two boolean toggles gate the optional constraints — flip true/false, the values stay below:
+  use_provider_order: false    # send `order` (prefer these providers, in this priority)
+  use_quantizations: true    # send the precision pin. The pin is now PER-MODEL — each role's
+                              # `quantizations` list lives in config/models.yaml (gemma bf16/fp16,
+                              # deepseek bf16/fp16/fp8), so flipping this on won't 404 a model that
+                              # lacks a bf16/fp16 host. Resolved by config.provider_for().
+  provider:
+    order: ["Together", "Hyperbolic", "DeepInfra"]   # applied only when use_provider_order: true
+    allow_fallbacks: true                             # always applied
+    data_collection: "deny"                           # always applied (skip data-logging hosts)
+
+rendering:
+  dpi: 300                          # DPI for the page.png persisted under tide/data/documents/
+  model_image_max_long_side: 1024   # downsize the copy actually sent to the vision model
+  poppler_path: null                # set if pdf2image can't find Poppler on PATH
+
+request:
+  temperature: 0.0
+  top_p: 0.1
+  max_new_tokens: 16384             # C1: raised from 8192 — long/dense pages were truncating mid-JSON and dropping the whole page
+  timeout_seconds: 600
+  max_retries: 3                    # backoff honours Retry-After + jitter
+  retry_backoff_seconds: 2.0        # base for exponential backoff (2,4,8,16… capped), + jitter

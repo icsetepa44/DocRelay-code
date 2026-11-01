@@ -1,0 +1,17 @@
+# secrets
+.env
+
+# datasets (see data/README.md) and generated files
+data/*
+!data/README.md
+tide/data/
+tide/runs/
+mpdocbench/data/
+mpdocbench/runs/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/

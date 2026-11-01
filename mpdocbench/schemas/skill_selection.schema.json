@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SkillSelection",
+  "type": "object",
+  "required": ["page_number", "skills", "coverage"],
+  "properties": {
+    "page_number": { "type": "integer" },
+    "coverage": { "enum": ["sufficient", "partial", "insufficient"] },
+    "skills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["skill_id", "version"],
+        "properties": {
+          "skill_id": { "type": "string" },
+          "version": { "type": "integer" },
+          "relevance": { "type": "number" },
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  }
+}

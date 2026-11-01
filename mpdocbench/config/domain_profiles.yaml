@@ -1,0 +1,53 @@
+# Per-domain profiles: optional prompt guidance and skill pins per MPDocBench domain (config.domain_profile).
+#
+# Each domain may set any of three fields (all optional; anything unset inherits `defaults`):
+#   guidance:      a short instruction fragment injected into content prompts via the
+#                  {{domain_profile}} token (extractor.md, region_analyzer.md).
+#   pin_skills:    skill_ids force-included in retrieval (unioned with runtime pins).
+#   weight_skills: {skill_id: additive_score_boost} biasing retrieval ranking before top-k.
+#
+# An empty domain inherits `defaults` (no change). Three domains whose layout archetype is reliable are filled:
+# newspaper / magazine / manualGuide (dense, multi-column, figure-heavy -> fine segmentation + column reading +
+# caption/figure + continuation nudges). The other domains stay empty on purpose.
+
+defaults:
+  guidance: ""
+  pin_skills: []
+  weight_skills: {}
+
+domains:
+  annualReport: {}
+  book: {}
+  examPaper: {}
+  goverment: {}        # spelled "goverment" in the MPDocBench data
+  magazine:
+    pin_skills: [caption, figure]
+    guidance: >-
+      This is a magazine page: a multi-column layout with many figures and captions and layered
+      headings/sub-headings. Read each column fully top-to-bottom before the next column. Give each
+      heading, paragraph, pull-quote, figure caption, and list item its OWN block; keep a caption
+      with its figure; do not merge separate items together. If ONE paragraph is cut by a COLUMN
+      break and resumes at the top of the next column on the SAME page, join it into one block
+      inline. Only a paragraph cut at the PAGE bottom that resumes on the next page is marked
+      "continues".
+  manualGuide:
+    pin_skills: [list, caption]
+    guidance: >-
+      This is a manual/guide page: dense with short, discrete steps, list items, labels, and figures.
+      Segment finely — each step, numbered or bulleted item, short instruction, and figure caption is
+      its OWN block. Do not lump several steps or items into one block. Keep a caption with its figure.
+  newspaper:
+    pin_skills: [caption, figure]
+    guidance: >-
+      This is a newspaper page: several columns of short, independent articles and blurbs. Read each
+      column fully top-to-bottom before the next column (left-to-right; the layout shows the columns).
+      Make every headline, sub-headline, article paragraph, blurb, byline, and photo caption its OWN
+      block — never merge separate articles or items into one block. Keep a photo/figure caption as its
+      own block next to its figure. If ONE article paragraph is cut by a COLUMN break and continues at
+      the top of the next column on the SAME page, join it into a single block inline (a column break is
+      not an article boundary). Only a paragraph cut at the PAGE bottom that resumes on the next page is
+      marked "continues".
+  paper: {}
+  prospectus: {}
+  researchReport: {}
+  textBook: {}

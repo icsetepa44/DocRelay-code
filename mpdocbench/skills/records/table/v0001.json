@@ -1,0 +1,30 @@
+{
+  "skill_id": "table",
+  "version": 1,
+  "status": "main",
+  "description": "Represents a data table as ONE unit, wherever and however it appears: a row/column grid or a uniform serial/itemized catalogue (e.g. an appendix or schedule list); standalone or embedded inside a point; on a single page or continuing across pages; with or without nested sub-rows.",
+  "applicability": [
+    "The content is a grid of rows and columns, OR a long uniform serial/itemized list (parallel-structured numbered items forming a catalogue/appendix/schedule rather than operative prose).",
+    "A long, uniform, parallel-structured numbered or bulleted LIST — many same-shape entries in an appendix/schedule serial catalogue — is this skill even when it visually reads as a list rather than a grid.",
+    "The table may stand alone or be introduced/referenced by a point.",
+    "The table may continue onto the next page, and its cells may contain nested sub-rows."
+  ],
+  "instructions": [
+    "Emit the table as ONE block of block_type table. Prefer structured content (headers + rows).",
+    "Do NOT shred a data table or a uniform serial catalogue into many separate text_block items — a long serial appendix/schedule list is ONE table, not dozens of points. This holds EVEN when the OCR renders the catalogue as a markdown/HTML bullet or numbered LIST: a long, uniform list in an appendix/schedule is a table, not a set of sub-points.",
+    "When a cell contains several sub-items with their own values (e.g. size/type variants each with a price), keep those sub-items and their aligned values WITHIN that row/cell; do not explode them into separate serial rows.",
+    "A row of bare ordinals ((১)(২)(৩)) placed directly under the real column headers is column numbering — treat it as part of the header, not a data row.",
+    "Attach the table to the point that INTRODUCES or CROSS-REFERENCES it (e.g. via a reference note such as 'দ্রষ্টব্য', 'পরিশিষ্টে উল্লিখিত', or a schedule reference like 'তফসিল-N') by setting parent_block_id to that point — even when the table is printed many pages later. Ownership follows the reference, not physical proximity. If nothing introduces it, leave parent_block_id null.",
+    "If the table (or list-rendered catalogue) spans pages, treat all fragments as ONE table: reuse the SAME stitch_id across fragments, do not repeat the header row as data, and ignore any running header/page number that interrupts it mid-list.",
+    "Distinguish a data grid / serial catalogue (this skill) from a fill-in form (form skill) or running prose (not a table). A bordered grid that is a blank fill-in or question/answer region belonging to a labelled form is NOT a table — it stays part of the form; only a grid with populated, homogeneous data rows is a table."
+  ],
+  "conflicts_with": [],
+  "provenance": {
+    "parent_skills": [
+      { "skill_id": "embedded_table", "version": 1 },
+      { "skill_id": "table_continuation", "version": 1 }
+    ],
+    "created_from_failures": [],
+    "reason": "Merged embedded_table + table_continuation: a table is one structural entity whether embedded, standalone, or spanning pages. Two separate skills described the same thing and were never selected together."
+  }
+}

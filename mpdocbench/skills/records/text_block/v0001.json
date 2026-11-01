@@ -1,0 +1,23 @@
+{
+  "skill_id": "text_block",
+  "version": 1,
+  "status": "main",
+  "description": "Represents a body paragraph of running prose as ONE text_block: ordinary reading text that is not a heading, table, figure, equation, caption, list, or code.",
+  "applicability": [
+    "The region is a paragraph (or a run of sentences) of ordinary prose.",
+    "The text is not a section title, not tabular, not a caption, and not a list or code block."
+  ],
+  "instructions": [
+    "Emit each paragraph as ONE block of block_type text_block, carrying its full text.",
+    "Keep a paragraph's sentences together — do NOT split one paragraph into sibling blocks on a mere line break; and do NOT merge two visually separate paragraphs into one.",
+    "A paragraph that continues onto the next page is ONE unit: if it began on a previous page (see CarryState open_units), reuse that unit's stitch_id so the fragments merge; a page starting mid-paragraph does NOT start a new block.",
+    "Do NOT nest paragraphs under one another; a plain paragraph has no parent unless it clearly belongs to a heading (then set parent_block_id to that heading).",
+    "Never emit a heading, table, figure, caption, list, or equation as a text_block."
+  ],
+  "conflicts_with": [],
+  "provenance": {
+    "parent_skills": [],
+    "created_from_failures": [],
+    "reason": "General-document adaptation (MPDocBench): a plain prose paragraph is its own structural entity, distinct from the legal numbered_point clause tree."
+  }
+}

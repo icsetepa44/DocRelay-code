@@ -1,0 +1,23 @@
+{
+  "skill_id": "form_structure",
+  "version": 1,
+  "status": "main",
+  "description": "Represents a form: label/value pairs, fill-in fields, or a declaration/application layout, preserved as structured content rather than a data table or running prose.",
+  "applicability": [
+    "The page contains form fields, label:value pairs, checkboxes, or fill-in blanks.",
+    "The content is laid out as a form (a template to be completed) rather than a data grid or operative prose."
+  ],
+  "instructions": [
+    "Keep each label together with its value/field; never separate a label from its value into different blocks.",
+    "Represent a coherent form section as one block, or as a parent block with its fields as children, preserving field order.",
+    "A form may contain an embedded bordered grid (e.g. a blank fill-in matrix or a question/answer block); keep that grid as PART of the form, not as a separate table.",
+    "Do not merge unrelated form sections into one block, and do not model a fill-in form as a data table (use the table skill only for standalone grids with populated, homogeneous data rows).",
+    "A form that is itself the body of a schedule/appendix (its cover title was handled as document furniture) is that schedule's payload, NOT an operative rule: attach it under the schedule cover heading (parent_block_id = that heading), never as a top-level text_block or numbered point."
+  ],
+  "conflicts_with": [],
+  "provenance": {
+    "parent_skills": [],
+    "created_from_failures": [],
+    "reason": "Initial manually authored skill."
+  }
+}

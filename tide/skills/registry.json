@@ -1,0 +1,10 @@
+{
+  "skills": [
+    { "skill_id": "numbered_point", "latest_version": 1, "status": "main", "record": "records/numbered_point/v0001.json" },
+    { "skill_id": "table", "latest_version": 1, "status": "main", "record": "records/table/v0001.json" },
+    { "skill_id": "form_structure", "latest_version": 1, "status": "main", "record": "records/form_structure/v0001.json" },
+    { "skill_id": "quoted_text", "latest_version": 1, "status": "main", "record": "records/quoted_text/v0001.json" },
+    { "skill_id": "figure_or_seal", "latest_version": 1, "status": "main", "record": "records/figure_or_seal/v0001.json" },
+    { "skill_id": "document_metadata", "latest_version": 1, "status": "main", "record": "records/document_metadata/v0001.json" }
+  ]
+}

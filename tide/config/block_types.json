@@ -1,0 +1,10 @@
+{
+  "allowed_block_types": [
+    "heading",
+    "text_block",
+    "table",
+    "image_or_seal",
+    "header_footer_page_number",
+    "noise_or_separator"
+  ]
+}

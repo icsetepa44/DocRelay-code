@@ -1,0 +1,22 @@
+{
+  "skill_id": "list",
+  "version": 1,
+  "status": "main",
+  "description": "Represents a genuine list (a bulleted or numbered enumeration of prose items) as ONE list block — items that are an enumeration, NOT a data catalogue/table.",
+  "applicability": [
+    "The region is a bulleted or numbered list of items (steps, points, bullet items).",
+    "It is a short-to-moderate enumeration of prose items, NOT a long uniform serial catalogue of same-shape data rows (that is a table)."
+  ],
+  "instructions": [
+    "Emit the list as ONE block of block_type list, keeping its items in order (each item as an entry in the block's content).",
+    "Keep the whole list together as one block; do NOT emit each list item as a separate top-level block, and do NOT shred it.",
+    "If a lead-in sentence introduces the list, the list may be attached to that block via parent_block_id.",
+    "If the 'list' is actually a long uniform catalogue of data rows, use the table skill instead."
+  ],
+  "conflicts_with": [],
+  "provenance": {
+    "parent_skills": [],
+    "created_from_failures": [],
+    "reason": "General-document adaptation (MPDocBench): List-Group is a distinct layout element, separated from data tables."
+  }
+}

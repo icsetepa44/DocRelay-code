@@ -1,0 +1,36 @@
+# DocRelay: pipeline + evaluation (both packages). Python 3.11.
+# Pinned to the versions of the environment the experiments ran in.
+
+# LLM calls (OpenRouter, OpenAI-compatible API) + configuration
+openai==2.44.0
+python-dotenv==1.2.2
+PyYAML==6.0.3
+jsonschema==4.26.0
+
+# page images (TIDE renders PDF pages; MPDocBench uses the OCR page images)
+pillow==10.4.0
+pypdfium2==4.30.0
+pdf2image==1.17.0            # fallback renderer; needs Poppler only if pypdfium2 fails
+beautifulsoup4==4.14.3
+
+# guideline retrieval (intfloat/multilingual-e5-small embeddings)
+sentence-transformers==5.5.1
+torch==2.11.0                # install the build for your platform/CUDA from pytorch.org if needed
+transformers==5.12.1
+
+# evaluation
+numpy==2.4.3
+scipy==1.17.1
+tqdm==4.67.3
+RapidFuzz==3.14.5
+
+# MPDocBench evaluation: needed by the official MPDocBench metric code that mpdocbench/src/eval/mpdocbench.py
+# imports from data/mpdocbench/repo/MPDocBench (TEDS, HeadTEDS, matching)
+Levenshtein==0.27.4
+apted==1.0.3
+lxml==6.1.1
+pylatexenc==2.11
+evaluate==0.4.6
+
+# tests
+pytest==9.1.1

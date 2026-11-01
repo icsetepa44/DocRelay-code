@@ -1,0 +1,30 @@
+{
+  "skill_id": "numbered_point",
+  "version": 1,
+  "status": "main",
+  "description": "Represents a numbered or lettered legal point (rule / section / clause) together with ALL of its nested content as ONE logical unit: its sub-points at any depth, plus any lists, tables, quotes, provisos or explanations that belong to it.",
+  "applicability": [
+    "The page contains numbered or lettered points, rules, sections, or clauses.",
+    "A point may have sub-points at one or more depths (e.g. numbered (১)(২), lettered (ক)(খ), deeper roman-style (অ)(আ)).",
+    "A point may also contain, as part of the same unit, an inner list, an embedded table, a quoted passage, a proviso, or an explanation."
+  ],
+  "instructions": [
+    "Emit each TOP-LEVEL numbered point as ONE parent block (block_type text_block) that carries its number, its title, and its lead text.",
+    "A single point can contain MANY children of different kinds. Attach ALL of them as descendants of that point via parent_block_id, each child's parent being its IMMEDIATE enclosing level (a sub-sub-point's parent is the sub-point, not the top point).",
+    "Children may include: numbered sub-points, lettered sub-points, deeper roman-style sub-points, inner lists, an enumeration introduced by a lead-in like 'যথা:—' / 'নিম্নরূপ' / a membership list, embedded tables (use the table skill for the table block), quoted passages, one or MORE stacked provisos (e.g. 'তবে শর্ত থাকে যে', and a further 'আরও শর্ত থাকে যে'), and explanations (e.g. 'ব্যাখ্যা।—'). Keep every one of them inside the point they belong to.",
+    "NEVER emit a sub-point, inner list item, proviso, explanation, or embedded table as a new TOP-LEVEL point. A numbering restart inside a sub-list, a new part, or a schedule does NOT create a new top-level point.",
+    "Keep a point's own sentences together; do not split one point into sibling blocks merely because it spans several sentences, lines, or an internal structure change.",
+    "A point that continues across a page boundary is ONE unit: do NOT start a new top-level point just because a page begins in the middle of a point. If the point began on a previous page (see CarryState open_units), attach this page's continuing children to that unit by reusing its stitch_id (the parent block is not available on this page).",
+    "Order sub-points by their reading-order position on the page, NOT by the letter/numeral value. OCR may mis-read, reorder, or duplicate a marker; do not create a new top-level point from a mis-read or duplicated marker.",
+    "Preserve the exact original numbering characters, including Bangla numerals and punctuation such as the danda."
+  ],
+  "conflicts_with": [],
+  "provenance": {
+    "parent_skills": [
+      { "skill_id": "numbered_point", "version": 1 },
+      { "skill_id": "nested_point", "version": 1 }
+    ],
+    "created_from_failures": [],
+    "reason": "Merged numbered_point + nested_point: a point and its nested sub-points/lists/tables are one structural entity, not two skills. Splitting them caused confusion and over-segmentation."
+  }
+}

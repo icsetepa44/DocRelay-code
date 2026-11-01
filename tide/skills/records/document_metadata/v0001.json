@@ -1,0 +1,24 @@
+{
+  "skill_id": "document_metadata",
+  "version": 1,
+  "status": "main",
+  "description": "Recognizes non-operative document furniture — publication/registration headers, the enabling/authorizing preamble, the issuing-authority block, running page headers and page numbers, signature/authentication blocks, and printer/publisher footers — and keeps it separate from the operative content.",
+  "applicability": [
+    "The content is administrative or publication furniture rather than an operative rule or a data table.",
+    "Examples of the phenomenon: a masthead / registration line, an enabling or authorizing preamble, an issuing-authority block, a running page header, a bare page number (including a first-page number printed in parentheses), a price/value line (e.g. 'মূল্য : টাকা ...'), a signature / authentication block, a printer or publisher footer, or a schedule/appendix cover title with its reference note."
+  ],
+  "instructions": [
+    "Identify such furniture and type it as a non-operative block: use header_footer_page_number for running headers, page numbers (including a first-page parenthetical number), price/value lines and publisher footers; use heading for mastheads, preambles, authority blocks, signature blocks, and schedule/appendix cover titles.",
+    "NEVER type document furniture as `text_block`, and never label it as a numbered operative point or let it absorb an operative point's number. `text_block` is reserved for operative content; document furniture is always one of `heading`, `header_footer_page_number`, or `image_or_seal`.",
+    "Do not merge furniture into an adjacent operative point; emit it as its own block in reading order (it may legitimately appear between points at page breaks).",
+    "A schedule/appendix cover heading plus its reference note is furniture (metadata); its payload is SUBORDINATE to the cover heading — a tabular list is a `table`, a declaration/application form is `form_structure` as a CHILD of the cover heading — never a top-level operative point.",
+    "An emblem, government seal, logo, or official portrait in the masthead is a figure, not text — handle it with the figure_or_seal skill (block_type image_or_seal), not here.",
+    "Type map when you decide a block is furniture: mastheads / preambles / authority blocks / signature blocks / schedule-or-appendix cover titles -> `heading`; running headers, page numbers (including a first-page parenthetical), price/value lines, publisher/printer footers -> `header_footer_page_number`; emblem / seal / logo / portrait -> `image_or_seal`; never `text_block`."
+  ],
+  "conflicts_with": [],
+  "provenance": {
+    "parent_skills": [],
+    "created_from_failures": [],
+    "reason": "Manually authored: non-operative gazette/administrative furniture is a recurring structural entity across such documents; typing it as operative points inflates clause counts."
+  }
+}

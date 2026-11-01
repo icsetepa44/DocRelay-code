@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FinalDocument",
+  "description": "Reference spec — NOT enforced at runtime (see src/llm/structured_output.py request_json).",
+  "type": "object",
+  "required": ["document_id", "units"],
+  "properties": {
+    "document_id": { "type": "string" },
+    "units": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["unit_id", "block_type", "parent_unit_id", "source_block_ids", "content"],
+        "properties": {
+          "unit_id": { "type": "string" },
+          "block_type": { "type": "string" },
+          "parent_unit_id": { "type": ["string", "null"] },
+          "source_block_ids": { "type": "array", "items": { "type": "string" } },
+          "content": { "type": ["object", "array"] }
+        }
+      }
+    }
+  }
+}
