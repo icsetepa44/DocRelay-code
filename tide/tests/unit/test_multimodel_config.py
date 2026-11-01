@@ -9,9 +9,7 @@ def test_model_for_includes_vision_and_quantizations():
 
 
 def test_per_role_quantizations_resolve_from_models_yaml():
-    # gemma-backed roles inherit the full-precision default (bf16/fp16 hosts exist)
     assert config.model_for("validator")["quantizations"] == ["bf16", "fp16"]
-    # deepseek critic roles pin fp8 — their best available precision (no bf16/fp16 host on OpenRouter)
     for role in ("super_validator", "final_decider"):
         assert config.model_for(role)["quantizations"] == ["fp8"]
 
@@ -33,9 +31,6 @@ def test_extractor_models_is_a_list_with_vision_flags():
     assert len(models) >= 1
     for m in models:
         assert "model" in m and "backend" in m and isinstance(m["vision"], bool)
-    # Don't hardcode specific model ids — models.yaml is the source of truth and the extractor
-    # comparison set changes between runs. Assert the structural invariant that matters instead:
-    # each model yields a distinct, filesystem-safe label (used to separate per-model run dirs).
     labels = {config.model_label(m["model"]) for m in models}
     assert len(labels) == len(models)
 

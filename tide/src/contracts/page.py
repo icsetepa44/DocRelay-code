@@ -1,5 +1,3 @@
-"""PageData (source for one page) and PageExtraction (structured result for one page)."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -12,11 +10,9 @@ from .continuation import ContinuationDecision
 
 @dataclass(frozen=True)
 class PageData:
-    """Source information available for one page (spec §4.1). Produced by the OCR adapter."""
-
     document_id: str
     page_number: int
-    page_image: str          # path to page.png on disk
+    page_image: str
     markdown: str
     html: str
 
@@ -36,8 +32,6 @@ class PageData:
 
 @dataclass
 class PageExtraction:
-    """Structured extraction of one page (spec §4.8). Block order == reading order."""
-
     page_number: int
     blocks: List[Block] = field(default_factory=list)
     continuation: Optional[ContinuationDecision] = None

@@ -1,8 +1,3 @@
-"""
-Run store — creates runs/run_YYYYMMDD_HHMMSS/<doc>/ and persists per-page + final
-artifacts (spec §6 layout).
-"""
-
 from __future__ import annotations
 
 import json
@@ -34,8 +29,6 @@ def doc_dir(run_dir: Path, doc_name: str, model_label: Optional[str] = None) -> 
 
 def page_dir_path(run_dir: Path, doc_name: str, page_number: int,
                   model_label: Optional[str] = None) -> Path:
-    """Path to a page dir WITHOUT creating it — for read-only use (resume scan, tail cleanup).
-    Mirrors page_dir's layout but never touches the filesystem."""
     d = run_dir / doc_name
     if model_label:
         d = d / model_label

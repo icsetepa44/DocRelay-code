@@ -1,51 +1,3 @@
-"""
-Per-page-boundary split / merge labels: WHERE the pipeline breaks or glues clauses, against gold.
-
-Every boundary between two consecutive pages (p | p+1, 1-based like gold) gets two labels:
-
-  gold      no_gold             — page p or p+1 is covered by NO gold item or table (a gold gap, e.g. a doc
-                                  annotated only on some pages): unknowable, excluded from rates
-            continues           — some gold clause OR gold table (part of its parent clause) has
-                                  page_start <= p < page_end
-            metadata_continues  — no clause/table spans it, but a gold metadata item does (excluded)
-            breaks              — nothing spans it: a new clause (or nothing) starts on p+1
-  pipeline  joined              — some predicted item (adapt.py contents of ANY type — clause, table or
-                                  metadata — page range from its block ids) has page_start <= p < page_end
-            broke               — none does
-  (A joining item typed metadata is a TYPING error, not a segmentation one: such boundaries stay
-  `carried`/`merge` and are flagged `joined_as_metadata`.)
-
-and one outcome:
-
-                     joined     broke
-    continues        carried    SPLIT    <- the over-segmentation failure, pinned to its boundary
-    breaks           MERGE      correct_break
-  page_missing — the pipeline has no pages/<p>/extraction.json for one side (page drop); excluded from rates.
-  gold_gap     — gold label no_gold; excluded from rates.
-  Known limit: a gold clause's page range includes its attached tables, so a clause whose TEXT ends early
-  but whose table sits pages later "continues" over the pages between (seen in an eyeball check).
-
-A document is skipped (page_count_mismatch) when its OCR page count differs from gold total_pages, so the
-page offset (pipeline 0-based == gold 1-based - 1, verified on OCR text) can never shift.
-
-Secondary checks (recorded, never change the label):
-  overlap / suspect — on a joined boundary, token overlap between the joining predicted item and the gold
-      clause(s): carried -> containment |P∩G|/min(|P|,|G|) vs the spanning gold clause; merge -> min of the
-      coverage of the clause that ends on p and the one that starts on p+1. Below SUSPECT_OVERLAP = suspect
-      (joined, but maybe the wrong content).
-  cause — from the per-page files the pipeline already persists (pipeline page q = p-1, 0-based):
-      split: stitched_but_dropped (a stitched unit spans the boundary but adapt dropped its top-level item:
-             noise_or_separator / empty) | opened_rejected (carry_rejection.json on q+1 marks an open unit 'rejected'; its symptom
-             kept) | opened_closed (open units closed as closed_by_successor / dropped_ambiguous) |
-             never_opened (no 'continues' decision on q and no open carry unit) | other | unknown (a file
-             is missing — never guessed)
-      merge: via_stitch (one stitched unit spans the boundary) | via_parent (joined only through the
-             parent_unit_id hierarchy)
-
-Measurement only (no LLM, no regex semantics). The boundary outcomes give the cross-page merge score C-P F1
-(src/eval/paper_metrics.py): carried = joined correctly (TP), merge = wrongly joined (FP), split = missed (FN).
-"""
-
 from __future__ import annotations
 
 import json
@@ -54,46 +6,38 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-_DU = Path(__file__).resolve().parents[2]  # tide/
+_DU = Path(__file__).resolve().parents[2]
 if str(_DU) not in sys.path:
     sys.path.insert(0, str(_DU))
-from src.core import config                                              # noqa: E402
-from src.eval import adapt                                               # noqa: E402
-from src.eval.evaluate import (PLACEHOLDER_RE, _table_key, discover_pairs,  # noqa: E402
+from src.core import config
+from src.eval import adapt
+from src.eval.evaluate import (PLACEHOLDER_RE, _table_key, discover_pairs,
                                flatten_table, normalize_prose, tokenize)
-from src.ocr import chandra_adapter                                      # noqa: E402
+from src.ocr import chandra_adapter
 
 try:
     from tqdm import tqdm
-except ImportError:  # pragma: no cover - tqdm is optional
+except ImportError:
     def tqdm(it, **_kw):
         return it
 
-# --- tunables (edit here; project convention = config via module globals, no CLI) ---
-SUSPECT_OVERLAP = 0.2                 # joined boundary with token overlap below this = suspect
+SUSPECT_OVERLAP = 0.2
 
 OUTCOMES = ["carried", "split", "merge", "correct_break", "metadata_span", "page_missing", "gold_gap"]
 CSV_FIELDS = ["document", "model", "page_before", "page_after", "gold_label", "pipeline_label", "outcome",
               "joined_as_metadata", "overlap", "suspect", "cause", "carry_symptom", "gold_span", "gold_clauses", "pred_units"]
 
 
-# ============================================================
-# GOLD SIDE
-# ============================================================
-
 def _as_int(v: Any) -> Optional[int]:
     return v if isinstance(v, int) and not isinstance(v, bool) else None
 
 
 def _gold_item_text(it: Dict[str, Any], table_text: Dict[str, str]) -> str:
-    """Item text with every `[table_N]` placeholder expanded to the flattened gold table."""
     return PLACEHOLDER_RE.sub(lambda m: f" {table_text.get(f'table_{int(m.group(1))}', '')} ",
                               str(it.get("text") or ""))
 
 
 def gold_items(gold: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Gold parsed_text items and tables[] with a valid page range: {type, number, ps, pe, text} (tables get
-    type "table"). Page-category metadata is dropped (as the evaluator does)."""
     table_text: Dict[str, str] = {}
     for t in gold.get("tables", []) or []:
         key = _table_key(t.get("table_id"))
@@ -119,7 +63,6 @@ def gold_items(gold: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def covered_pages(items: List[Dict[str, Any]]) -> Set[int]:
-    """1-based pages covered by at least one gold item or table (from gold_items)."""
     return {pg for x in items for pg in range(x["ps"], x["pe"] + 1)}
 
 
@@ -128,12 +71,7 @@ def gold_total_pages(gold: Dict[str, Any], items: List[Dict[str, Any]]) -> int:
     return tp if tp else max((x["pe"] for x in items), default=0)
 
 
-# ============================================================
-# PIPELINE SIDE
-# ============================================================
-
 def _unit_pages(unit: Dict[str, Any]) -> Set[int]:
-    """0-based pipeline pages of a FinalUnit's source blocks."""
     return {p for p in (adapt.block_page(b) for b in unit.get("source_block_ids", []) or []) if p is not None}
 
 
@@ -149,7 +87,6 @@ def _read(path: Path) -> Optional[Any]:
 
 
 def _split_cause(q: int, pages_dir: Path, units: List[Dict[str, Any]]) -> Tuple[str, str]:
-    """(cause, carry_symptom) for a split between pipeline pages q and q+1 (0-based)."""
     if any({q, q + 1} <= _unit_pages(u) for u in units):
         return "stitched_but_dropped", ""
     ext = _read(pages_dir / f"{q:04d}" / "extraction.json")
@@ -173,13 +110,8 @@ def _split_cause(q: int, pages_dir: Path, units: List[Dict[str, Any]]) -> Tuple[
 
 
 def _merge_cause(q: int, members: List[Dict[str, Any]]) -> str:
-    """via_stitch if one stitched unit spans pipeline pages q..q+1, else via_parent."""
     return "via_stitch" if any({q, q + 1} <= _unit_pages(u) for u in members) else "via_parent"
 
-
-# ============================================================
-# OVERLAP (secondary sanity flag)
-# ============================================================
 
 def _bag(text: str) -> Counter:
     return Counter(tokenize(normalize_prose(text, drop_tables=False)))
@@ -197,13 +129,8 @@ def _coverage(of: Counter, by: Counter) -> Optional[float]:
     return sum((of & by).values()) / n if n else None
 
 
-# ============================================================
-# ONE (doc, model)
-# ============================================================
-
 def label_document(doc: str, model: str, fd_path: Path, gold: Dict[str, Any],
                    ocr_pages: Optional[int]) -> Dict[str, Any]:
-    """Label every page boundary of one (doc, model). Returns {rows, skip_reason, pages}."""
     items = gold_items(gold)
     total = gold_total_pages(gold, items)
     base = {"document": doc, "model": model, "pages": total, "rows": [], "skip_reason": None}
@@ -235,7 +162,7 @@ def label_document(doc: str, model: str, fd_path: Path, gold: Dict[str, Any],
 
     rows = []
     for p in range(1, total):
-        q = p - 1  # pipeline page of `p`
+        q = p - 1
         g_span = [c for c in spanners if c["ps"] <= p < c["pe"]]
         p_span = [c for c in pred if c["page_start"] <= p < c["page_end"]]
         if p not in covered or p + 1 not in covered:
@@ -293,10 +220,6 @@ def label_document(doc: str, model: str, fd_path: Path, gold: Dict[str, Any],
     return {**base, "rows": rows}
 
 
-# ============================================================
-# ONE RUN
-# ============================================================
-
 def _ocr_page_count(doc: str) -> Optional[int]:
     try:
         md = chandra_adapter.ocr_dir_for(doc) / "markdown"
@@ -307,7 +230,6 @@ def _ocr_page_count(doc: str) -> Optional[int]:
 
 
 def label_run(run_dir: Path, gold_root: Optional[Path] = None) -> List[Dict[str, Any]]:
-    """label_document for every (doc, model) pair of a finished run (gold from config.BENCHMARK_GOLD_ROOT)."""
     gold_root = Path(gold_root or config.BENCHMARK_GOLD_ROOT)
     pairs, _ = discover_pairs(Path(run_dir), gold_root)
     docs = []

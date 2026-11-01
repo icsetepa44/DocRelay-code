@@ -9,9 +9,6 @@ def test_model_for_includes_vision():
 
 
 def test_region_analyzer_routed_to_gemma():
-    # region analysis runs on gemma (the default). The
-    # resolution must keep vision=True, else the orchestrator stops sending the page image
-    # (region_vision gate = model_for("region_analyzer")["vision"]).
     assert config.model_for("region_analyzer") == {
         "backend": "openrouter", "model": "google/gemma-4-31b-it", "vision": True,
         "quantizations": ["bf16", "fp16"]}
@@ -38,9 +35,6 @@ def test_extractor_models_is_a_list_with_vision_flags():
     assert len(models) >= 1
     for m in models:
         assert "model" in m and "backend" in m and isinstance(m["vision"], bool)
-    # Don't hardcode specific model ids — models.yaml is the source of truth and the extractor
-    # comparison set changes between runs. Assert the structural invariant that matters instead:
-    # each model yields a distinct, filesystem-safe label (used to separate per-model run dirs).
     labels = {config.model_label(m["model"]) for m in models}
     assert len(labels) == len(models)
 

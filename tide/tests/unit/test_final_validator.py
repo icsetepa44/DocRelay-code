@@ -4,7 +4,7 @@ from src.stages.final_validator import _coverage_gate
 
 def test_coverage_gate_trips_over_threshold(monkeypatch):
     monkeypatch.setattr(config, "MAX_EMPTY_PAGE_RATIO", 0.15)
-    summaries = [{"empty_nontrivial": True}] * 3 + [{"empty_nontrivial": False}] * 5  # 3/8 = 0.375
+    summaries = [{"empty_nontrivial": True}] * 3 + [{"empty_nontrivial": False}] * 5
     empty, total, ratio, tripped = _coverage_gate(summaries)
     assert empty == 3 and total == 8 and tripped is True
 

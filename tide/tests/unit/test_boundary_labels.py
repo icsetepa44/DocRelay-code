@@ -1,8 +1,3 @@
-"""Tests for the per-page-boundary split/merge labels (src/eval/boundary_labels.py).
-
-Synthetic gold + final_document.json + pages/ on tmp_path. Gold pages are 1-based; pipeline block ids /
-pages/ dirs are 0-based (gold page p == pipeline page p-1)."""
-
 import json
 
 from src.eval import boundary_labels as bl
@@ -24,7 +19,6 @@ def _clause(num, text, ps, pe, typ="clause"):
 
 
 def _setup(tmp_path, units, n_pages, page_files=None, missing=()):
-    """Write final_document.json + pages/<p>/extraction.json (+ optional extra per-page files)."""
     d = tmp_path / DOC / "m"
     for p in range(n_pages):
         if p in missing:
@@ -96,8 +90,6 @@ def test_split_opened_closed_and_other(tmp_path):
 
 
 def test_joined_under_metadata_item_is_carried_and_flagged(tmp_path):
-    """A stitched unit crosses the page under a heading (metadata top item): the pages were kept together,
-    so it is `carried` (a typing error, not a split) and flagged joined_as_metadata."""
     units = [_unit("h", "Schedule", [_bid(0, 1)], bt="heading"),
              _unit("s1", A, [_bid(0, 2), _bid(1, 1)], parent="h")]
     fd = _setup(tmp_path, units, 2)
@@ -106,7 +98,6 @@ def test_joined_under_metadata_item_is_carried_and_flagged(tmp_path):
 
 
 def test_split_stitched_but_dropped(tmp_path):
-    """A stitched unit crosses the page, but its top item is noise_or_separator, which adapt drops."""
     units = [_unit("n", "----", [_bid(0, 1)], bt="noise_or_separator"),
              _unit("s1", A, [_bid(0, 2), _bid(1, 1)], parent="n")]
     fd = _setup(tmp_path, units, 2)
@@ -135,7 +126,6 @@ def test_merge_via_stitch_and_via_parent_and_overlap(tmp_path):
 
 def test_correct_break_and_suspect_carry(tmp_path):
     gold = _gold([_clause("c1", A, 1, 1), _clause("c2", B, 2, 3)], 3)
-    # p1|2: two separate items -> correct_break; p2|3: joined, but with unrelated text -> suspect carried
     fd = _setup(tmp_path, [_unit(_bid(0, 1), A, [_bid(0, 1)]),
                            _unit("s1", "totally different words here", [_bid(1, 1), _bid(2, 1)])], 3)
     res = bl.label_document(DOC, "m", fd, gold, 3)
@@ -144,7 +134,6 @@ def test_correct_break_and_suspect_carry(tmp_path):
 
 
 def test_multi_page_span_labels_every_interior_boundary(tmp_path):
-    """A gold clause on pages 1-4 = 3 continues-boundaries; the pipeline breaks only at 2|3."""
     fd = _setup(tmp_path, [_unit("s1", "a b", [_bid(0, 1), _bid(1, 1)]),
                            _unit("s2", "c d", [_bid(2, 1), _bid(3, 1)])], 4)
     res = bl.label_document(DOC, "m", fd, _gold([_clause("c1", "a b c d", 1, 4)], 4), 4)
@@ -184,7 +173,6 @@ def test_table_placeholder_expanded_for_overlap(tmp_path):
 
 
 def test_gold_gap_when_a_page_has_no_gold_item(tmp_path):
-    """Gold annotates only pages 1 and 3: boundaries touching page 2 are gold_gap, never a merge."""
     fd = _setup(tmp_path, [_unit("s1", A + " " + B, [_bid(0, 1), _bid(1, 1), _bid(2, 1)])], 3)
     res = bl.label_document(DOC, "m", fd, _gold([_clause("c1", A, 1, 1), _clause("c2", B, 3, 3)], 3), 3)
     assert _outcomes(res) == [(1, "gold_gap"), (2, "gold_gap")]
@@ -192,7 +180,6 @@ def test_gold_gap_when_a_page_has_no_gold_item(tmp_path):
 
 
 def test_gold_table_spanning_the_boundary_counts_as_continues(tmp_path):
-    """No parsed_text item covers pages 2-3, but its table does: the clause continues there."""
     gold = {"document_info": {"total_pages": 3}, "parsed_text": [_clause("c1", "[table_1]", 1, 1)],
             "tables": [{"table_id": "table_1", "page_start": 1, "page_end": 3, "headers": ["H"],
                         "rows": [["rice"]]}]}

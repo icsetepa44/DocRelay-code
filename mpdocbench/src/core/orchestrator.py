@@ -1,23 +1,3 @@
-"""
-Orchestrator — the v1 stable-core per-page loop (spec §20 minus the §21 failure branch)
-followed by deterministic assembly + final validation (spec §29).
-
-Per page (config.USE_SUPERVALIDATOR = True, the active architecture, as in the TIDE pipeline):
-           retrieve main skills -> route -> extract (draft) -> SuperValidator (page verifier)
-           -> FinalDecider (page corrector; only on a correction-triggering issue or an empty draft)
-           -> resolve continuation (deterministic: verifier review overrides the draft's decisions,
-              uncertain -> ends, last page -> all ends) -> build carry state -> persist
-Ablation (also SKIP_VERIFIER_AND_DECIDER = True): the same path with NO SuperValidator / FinalDecider call —
-           the draft goes straight to the deterministic continuation step (uncertain -> ends).
-Legacy (USE_SUPERVALIDATOR = False): extract -> validate (report-only) -> resolve continuation
-           (judge only when uncertain) -> build carry state -> persist
-Then:      assemble -> final validate -> persist FinalDocument + FinalValidation.
-
-Runs for ONE (document, extractor_model). The extractor model is the compared variable;
-all other agents use their configured (fixed) models. Each stage sends the page image only
-if its resolved model is vision-capable (text-only models run on OCR markdown+html).
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -61,16 +41,12 @@ def _build_query(page: PageData, carry: CarryState) -> str:
 
 
 def _open_table_pins(carry: CarryState) -> List[str]:
-    """Skills to force into retrieval this page: pin `table` when a table is still open, so a
-    continuing table fragment keeps the anti-shred / cross-page instructions even if its page
-    text no longer looks table-shaped and drops the skill from top-k (T7)."""
     if any(u.block_type == "table" for u in carry.open_units):
         return ["table"]
     return []
 
 
 def _regions_guidance(region_analysis, region_selection) -> List[Dict[str, Any]]:
-    """Compact per-region guidance for the extractor: description + chosen skill_ids."""
     skills_by_region: Dict[str, List[str]] = {
         r.region_id: [s.skill_id for s in r.skills] for r in region_selection.regions
     }
@@ -94,13 +70,6 @@ def _resolve_continuation(
     unresolved_policy: str,
     judge_vision: bool = True,
 ) -> tuple[ContinuationDecision, Dict[str, Any]]:
-    """Resolve every 'uncertain' continuation decision and return (cont, judge_record).
-
-    `judge_record` makes the (otherwise transient) judge activity observable: it captures
-    what the extractor / the B2 rule flagged as uncertain, whether the judge was actually
-    invoked, and its verdicts — because 'uncertain' is always resolved before the page is
-    persisted, so it can never be counted from extraction.json afterward.
-    """
     cont = extraction.continuation or ContinuationDecision(page.page_number, [])
     extractor_uncertain = [d.block_id for d in cont.decisions if d.decision == "uncertain"]
     judge_record: Dict[str, Any] = {
@@ -111,14 +80,12 @@ def _resolve_continuation(
         "verdicts": [],
     }
 
-    # Last page: nothing can continue -> coerce to ends.
     if next_page is None:
         for d in cont.decisions:
             if d.decision != "ends":
                 d.decision = "ends"
         return cont, judge_record
 
-    # Simple continuation: the blocks the extractor marked 'uncertain' are what the judge resolves.
     uncertain = [d.block_id for d in cont.decisions if d.decision == "uncertain"]
 
     if uncertain and config.USE_JUDGE_WHEN_UNCERTAIN:
@@ -148,7 +115,7 @@ def _resolve_continuation(
                 f"page {page.page_number}: unresolved continuation for "
                 f"{[d.block_id for d in still]}"
             )
-        for d in still:  # 'coerce': conservatively close
+        for d in still:
             d.decision = "ends"
     return cont, judge_record
 
@@ -167,27 +134,22 @@ def run_document(
     domain: Optional[str] = None,
     on_page_done: Optional[Callable[[int], None]] = None,
 ) -> Dict[str, Any]:
-    """`on_page_done(page_number)` (optional) is called once per processed page — normal or recovered —
-    e.g. to drive run.py's page-level progress bar. A failing callback never breaks the run."""
     unresolved_policy = unresolved_policy or config.UNRESOLVED_POLICY
 
     def _page_done(page_number: int) -> None:
         if on_page_done is not None:
             try:
                 on_page_done(page_number)
-            except Exception:  # noqa: BLE001 — progress reporting must never break a run
+            except Exception:
                 pass
 
     registry = get_registry()
     prefix = f"[{model_label}] " if model_label else ""
 
-    # per-domain profile (empty by default -> no behavior change). Skills to force-include
-    # (unioned with runtime pins) + additive retrieval weights; guidance rides into the prompts.
     domain_prof = config.domain_profile(domain)
     domain_pins: List[str] = domain_prof["pin_skills"]
     domain_weights: Dict[str, float] = domain_prof["weight_skills"]
 
-    # Read-only load of pre-materialised pages (fallback: materialise if absent).
     pages = ds.load_materialized_pages(doc_name)
     if not pages:
         pages = ds.materialize_document(doc_name, overwrite=overwrite_images)
@@ -197,7 +159,6 @@ def run_document(
     document_id = pages[0].document_id
     allocator = StitchIdAllocator(document_id)
 
-    # Per-stage vision resolution (extractor from override; others from config).
     extractor_model = extractor_model or config.model_for("extractor")
     extractor_vision = bool(extractor_model.get("vision", False))
     router_vision = config.model_for("skill_router")["vision"]
@@ -206,11 +167,10 @@ def run_document(
     region_mode = config.RETRIEVAL_MODE == "region"
     region_vision = config.model_for("region_analyzer")["vision"] if region_mode else False
     use_sv = config.USE_SUPERVALIDATOR
-    # Ablation (extractor only): stay on the critic-corrector path but skip both of its LLM calls.
     skip_vd = use_sv and config.SKIP_VERIFIER_AND_DECIDER
     super_validator_vision = config.model_for("super_validator")["vision"] if use_sv and not skip_vd else False
     final_decider_vision = config.model_for("final_decider")["vision"] if use_sv and not skip_vd else False
-    if use_sv:  # the legacy validator / judge do not run on the critic-corrector path
+    if use_sv:
         validator_vision = judge_vision = False
     need_image = (extractor_vision or router_vision or validator_vision or judge_vision
                   or region_vision or super_validator_vision or final_decider_vision)
@@ -222,11 +182,10 @@ def run_document(
 
     for i, page in enumerate(pages):
         next_page = pages[i + 1] if i + 1 < len(pages) else None
-        usage.set_tags(page=page.page_number)  # cost/time ledger: tag this page's LLM calls
+        usage.set_tags(page=page.page_number)
         print(f"{prefix}[page {page.page_number}] extracting…", flush=True)
         image = ds.load_model_image(page.page_image) if need_image else None
 
-        # --- ESSENTIAL: route + extract. Failure here loses the page's content. ---
         selection_to_persist: Any = None
         region_analysis = None
         try:
@@ -268,16 +227,11 @@ def run_document(
                     model_override=extractor_model,
                     domain=domain,
                 )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             if stop_on_page_error:
                 raise
             print(f"{prefix}  EXTRACTION ERROR on page {page.page_number}: {exc}")
             page_errors.append({"page_number": page.page_number, "stage": "extract", "error": str(exc)})
-            # Graceful fallback (FAILURE_ANALYSIS_V8 mixed-OCR fragility): do NOT drop the page.
-            # First retry the extractor in the most robust mode — page-mode, markdown-only OCR, all
-            # 'main' skills, no region guidance (this recovers region_analyzer/skill_router schema
-            # failures and format-tripped extractor failures). If that also fails, keep the page's
-            # OCR text as one flagged text_block so a page with real OCR never yields zero content.
             recovery = "none"
             extraction = None
             try:
@@ -292,7 +246,7 @@ def run_document(
                           f"({len(extraction.blocks)} blocks)")
                 else:
                     extraction = None
-            except Exception as exc2:  # noqa: BLE001
+            except Exception as exc2:
                 print(f"{prefix}    markdown-only retry failed: {exc2}")
             if extraction is None:
                 ocr_text = (page.markdown or "").strip()
@@ -310,8 +264,6 @@ def run_document(
                         page_number=page.page_number, blocks=[],
                         continuation=ContinuationDecision(page.page_number, []))
             extractions.append(extraction)
-            # C3: preserve the incoming carry (don't wipe it) so the next page's
-            # continuation is not orphaned — a page drop becomes a localized gap.
             carry = CarryState(from_page=page.page_number, open_units=carry.open_units)
             page_summaries.append({
                 "page_number": page.page_number, "num_blocks": len(extraction.blocks),
@@ -322,8 +274,6 @@ def run_document(
             _page_done(page.page_number)
             continue
 
-        # --- C2: a non-trivial page that returned ZERO blocks is a (possibly silent)
-        #     extraction failure. Retry once, then flag it. ---
         nontrivial_empty = (not extraction.blocks
                             and len(page.markdown.strip()) >= config.MIN_CHARS_NONTRIVIAL_PAGE)
         if nontrivial_empty and config.RETRY_EMPTY_PAGE:
@@ -338,18 +288,12 @@ def run_document(
                     domain=domain,
                 )
                 nontrivial_empty = not extraction.blocks
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 print(f"{prefix}    retry failed: {exc}")
         if nontrivial_empty:
             page_errors.append({"page_number": page.page_number, "stage": "extract",
                                 "error": "empty_extraction"})
 
-        # --- Track 2: page under-production guard. The detector always runs (page_underproduction.json);
-        #     when PAGE_UNDERPRODUCTION_RETRY is on it re-extracts a flagged page with a corrective nudge,
-        #     keeping the highest-coverage attempt. Catches the "1-2 near-empty blocks for a text-rich
-        #     page" bail-out that C2's zero-block check misses. Runs before validate/continuation/carry so
-        #     downstream sees the recovered blocks. region_analysis is only present in region mode; without
-        #     it the region-count clause can't trip, so the guard is inert (by design) outside region mode. ---
         n_regions = len(region_analysis.regions) if region_analysis is not None else 0
         try:
             underproduction_record = underproduction.analyze_underproduction(
@@ -357,11 +301,10 @@ def run_document(
                 min_regions=config.PAGE_UNDERPRODUCTION_MIN_REGIONS,
                 block_ratio=config.PAGE_UNDERPRODUCTION_BLOCK_RATIO,
                 min_coverage=config.PAGE_UNDERPRODUCTION_MIN_COVERAGE)
-        except Exception as exc:  # noqa: BLE001 — a diagnostic must never break a run
+        except Exception as exc:
             underproduction_record = {"under_produced": False, "error": str(exc)}
         underproduction_record["page_number"] = page.page_number
         underproduction_record["retried"] = 0
-        # Retry only nonzero-but-thin pages (a true zero-block page is C2's job above).
         if (config.PAGE_UNDERPRODUCTION_RETRY and underproduction_record.get("under_produced")
                 and extraction.blocks):
             best, best_rec, retried = extraction, underproduction_record, 0
@@ -381,7 +324,7 @@ def run_document(
                         regions=(_regions_guidance(region_analysis, region_selection)
                                  if region_mode else None),
                         domain=domain, retry_note=note)
-                except Exception as exc:  # noqa: BLE001 — never break a run on a retry
+                except Exception as exc:
                     print(f"{prefix}    under-production retry failed: {exc}")
                     break
                 rec = underproduction.analyze_underproduction(
@@ -398,11 +341,6 @@ def run_document(
             extraction, underproduction_record = best, best_rec
             underproduction_record["retried"] = retried
 
-        # --- P2 (T1/T4): schedule over-segmentation. The detector is a deterministic diagnostic
-        #     and always runs (over_segmentation.json). SCHEDULE_COLLAPSE additionally re-nests a
-        #     flagged uniform run under its schedule cover (or its own first item) — rewriting only
-        #     parent_block_id, never the text. Runs before validate/continuation/carry so every
-        #     downstream stage sees the collapsed structure. Must never break a run. ---
         try:
             over_segmentation_record = schedule_guard.analyze_over_segmentation(
                 schedule_guard.page_blocks_of(extraction.blocks),
@@ -414,14 +352,12 @@ def run_document(
                 print(f"{prefix}  page {page.page_number}: collapsed "
                       f"{over_segmentation_record['run_count']} uniform schedule run(s) "
                       f"({over_segmentation_record['flagged_block_count']} block(s) re-nested)")
-        except Exception as exc:  # noqa: BLE001 — a diagnostic must never break a run
+        except Exception as exc:
             over_segmentation_record = {"page_number": page.page_number, "runs": [],
                                         "run_count": 0, "flagged_block_count": 0, "error": str(exc)}
 
         super_validation_record = None
         if use_sv:
-            # --- Critic-corrector (as in the TIDE pipeline). NON-FATAL throughout: a critic or
-            #     corrector failure keeps the draft; nothing here can drop the page. ---
             super_validation = None
             judge_record = {"page_number": page.page_number, "judge_invoked": False,
                             "corrector_adopted": False, "review_applied": False,
@@ -433,14 +369,14 @@ def run_document(
                         page, next_page, extraction, carry,
                         image if super_validator_vision else None, domain=domain,
                         draft_coverage=super_validator.coverage_hint(underproduction_record))
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 print(f"{prefix}  super_validator error (ignored, draft kept): {exc}")
                 page_errors.append({"page_number": page.page_number, "stage": "super_validator",
                                     "error": str(exc)})
 
             corrected = False
             if not skip_vd and super_validator.needs_correction(super_validation, extraction):
-                judge_record["judge_invoked"] = True  # semantics (as in the TIDE pipeline): corrector fired
+                judge_record["judge_invoked"] = True
                 try:
                     corrected_extraction = final_decider.decide(
                         page, next_page, extraction, super_validation, carry,
@@ -451,20 +387,16 @@ def run_document(
                         judge_record["corrector_adopted"] = True
                     else:
                         print(f"{prefix}  final_decider returned 0 blocks (draft kept)")
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     print(f"{prefix}  final_decider error (draft kept): {exc}")
                     page_errors.append({"page_number": page.page_number, "stage": "final_decider",
                                         "error": str(exc)})
 
-            # Deterministic continuation resolution.
             final_cont = extraction.continuation or ContinuationDecision(page.page_number, [])
             if next_page is None:
                 for d in final_cont.decisions:
                     d.decision = "ends"
             else:
-                # The verifier's review refers to the DRAFT's block ids. The corrector's output is
-                # renumbered by reading order, so the review is applied only when the draft was kept;
-                # an adopted correction already carries the review (its prompt applies it).
                 if super_validation and super_validation.continuation_review and not corrected:
                     rev_by_id = {c.block_id: c for c in super_validation.continuation_review}
                     for d in final_cont.decisions:
@@ -489,23 +421,21 @@ def run_document(
                 page_validation = PageValidation(page_number=page.page_number,
                                                  status="skipped" if skip_vd else "error", issues=[])
         else:
-            # --- LEGACY: validator is report-only; never discard the extraction. ---
             try:
                 page_validation = validator.validate(page, extraction, carry,
                                                      image if validator_vision else None)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 print(f"{prefix}  validator error (ignored, report-only): {exc}")
                 page_validation = PageValidation(page_number=page.page_number, status="error", issues=[])
                 page_errors.append({"page_number": page.page_number, "stage": "validate", "error": str(exc)})
 
-            # --- NON-FATAL: continuation resolution + carry. On judge failure, coerce. ---
             try:
                 final_cont, judge_record = _resolve_continuation(
                     extraction, page, next_page, carry, image, unresolved_policy, judge_vision
                 )
             except UnresolvedContinuationError:
                 raise
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 print(f"{prefix}  continuation error (ignored): {exc}")
                 page_errors.append({"page_number": page.page_number, "stage": "continuation", "error": str(exc)})
                 final_cont = extraction.continuation or ContinuationDecision(page.page_number, [])
@@ -516,15 +446,10 @@ def run_document(
                                 "error": str(exc), "extractor_uncertain": [], "b2_flagged": [],
                                 "judged_block_ids": [], "verdicts": []}
 
-        # Pass the OLD carry (RHS evaluated before assignment) so B1 can keep a main
-        # point's open-state/expected-next signals alive while only its sub-points stream.
         incoming_carry = carry
         carry = carry_builder.build_carry_state(extraction, final_cont, allocator, incoming_carry)
-        # C3: a zero-block page must not silently wipe the carry — keep the incoming open units.
         if not extraction.blocks and incoming_carry.open_units:
             carry = CarryState(from_page=page.page_number, open_units=incoming_carry.open_units)
-        # Carry-rejection diagnostic: which incoming open units (of ANY type) did the extractor
-        # NOT continue on this page? Deterministic; must never break a run.
         errset = {pe.get("page_number") for pe in page_errors}
         try:
             carry_rejection_record = carry_rejection.analyze_carry(
@@ -537,7 +462,7 @@ def run_document(
                 collision_guard=config.CARRY_COLLISION_GUARD,
             )
             carry_rejection_record["page_number"] = page.page_number
-        except Exception as exc:  # noqa: BLE001 — a diagnostic must never break a run
+        except Exception as exc:
             carry_rejection_record = {"page_number": page.page_number, "units": [],
                                       "rejected_count": 0, "error": str(exc)}
         _persist_page(run_dir, doc_name, page, selection_to_persist, extraction,
@@ -571,12 +496,12 @@ def run_document(
     run_store.write_json(ddir / "final_document.json", final_doc.to_dict())
 
     final_validation = None
-    usage.set_tags(page=None)  # the final validator's call is per document, not per page
+    usage.set_tags(page=None)
     if run_final_validator:
         try:
             final_validation = final_validator.validate(document_id, final_doc, page_summaries)
             run_store.write_json(ddir / "final_validation.json", final_validation.to_dict())
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             print(f"{prefix}  final validator error: {exc}")
 
     summary = {
@@ -591,8 +516,6 @@ def run_document(
         "empty_pages": sum(1 for s in page_summaries if s.get("empty_nontrivial")),
         "use_supervalidator": use_sv,
         "skip_verifier_and_decider": skip_vd,
-        # On the critic-corrector path judge_pages = pages where the FinalDecider fired (TIDE pipeline
-        # semantics); corrector_adopted_pages = pages whose corrected extraction replaced the draft.
         "judge_pages": sum(1 for s in page_summaries if s.get("judge_invoked")),
         "corrector_adopted_pages": sum(1 for s in page_summaries if s.get("corrector_adopted")),
         "judge_blocks": sum(s.get("judged_count", 0) for s in page_summaries),
@@ -616,21 +539,13 @@ def _persist_page(run_dir, doc_name, page, selection, extraction, validation, ca
     run_store.write_json(pdir / "extraction.json", extraction.to_dict())
     run_store.write_json(pdir / "validation.json", validation.to_dict())
     run_store.write_json(pdir / "carry_state.json", carry.to_dict())
-    # Continuation-judge activity for this page (written every page so the failure detector
-    # can tell "no boundary routed" from "judge actually ran" — 'uncertain' itself never
-    # survives to extraction.json, so it can't be counted there).
     if judge_record is not None:
         run_store.write_json(pdir / "continuation_judge.json", judge_record)
-    # Carry-rejection ledger: which incoming open units the extractor continued vs rejected.
     if carry_rejection_record is not None:
         run_store.write_json(pdir / "carry_rejection.json", carry_rejection_record)
-    # Over-segmentation ledger (T1/T4): uniform numbered runs flagged (and, if enabled, re-nested).
     if over_segmentation_record is not None:
         run_store.write_json(pdir / "over_segmentation.json", over_segmentation_record)
-    # Track 2 page-drop guard ledger: whether the page looked under-produced (and any retry outcome).
     if underproduction_record is not None:
         run_store.write_json(pdir / "page_underproduction.json", underproduction_record)
-    # SuperValidator critique in full (issues + suggested fixes + continuation review); validation.json
-    # holds the issues in PageValidation shape. Critic-corrector path only.
     if super_validation_record is not None:
         run_store.write_json(pdir / "super_validation.json", super_validation_record)

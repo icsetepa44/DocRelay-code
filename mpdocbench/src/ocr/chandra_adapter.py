@@ -1,21 +1,3 @@
-"""
-Chandra OCR adapter — turns chandra OCR output into PageData (spec §8.1).
-
-Reads the chandra-native OCR under `<root>/<doc>/` (root = config.BENCHMARK_OCR_PARENT, data/mpdocbench/ocr/,
-written by scripts/ocr_images.py; or pipeline.yaml inputs.ocr_root), or under a category level
-`<root>/<domain>/<doc>/`:
-
-    <doc>/markdown/page_NNNN.md      <- per-page markdown  (0-indexed, 4-digit)
-    <doc>/html/page_NNNN.html        <- per-page html
-    <doc>/layout/page_NNNN.json      <- per-page layout {page_num, page_box, chunks} (CONSUMED)
-    <doc>/page_images/page_NNNN.png  <- the page image fed to the vision model (NO PDF render)
-    <doc>/<doc>.json                 <- combined marker (fallback source)
-
-No OCR is re-run here. Each page record carries document_id, page_number, content.raw_markdown/
-raw_html, the parsed `layout`, and `page_image_src` (absolute path to the page image). The document
-store points PageData.page_image straight at that image — this fork has no PDFs.
-"""
-
 from __future__ import annotations
 
 import json
@@ -27,11 +9,6 @@ from src.contracts.page import PageData
 
 
 def ocr_dir_for(doc_name: str) -> Path:
-    """Folder holding the chandra OCR output for a benchmark document.
-
-    Two layouts under the OCR root: flat ``<root>/<doc>/`` or one category level
-    ``<root>/<domain>/<doc>/`` (where the category folder = the stem's domain prefix). When
-    neither exists the flat path is returned, so callers still report "no OCR folder"."""
     root = config.BENCHMARK_OCR_PARENT
     flat = root / doc_name
     if flat.is_dir():
@@ -41,12 +18,10 @@ def ocr_dir_for(doc_name: str) -> Path:
 
 
 def _page_image_src(doc_name: str, page_index: int) -> str:
-    """Absolute path to a page's image (page_images/page_NNNN.png)."""
     return str(ocr_dir_for(doc_name) / "page_images" / f"page_{page_index:04d}.png")
 
 
 def _read_layout(doc_name: str, page_index: int) -> Dict[str, Any]:
-    """Parsed layout/page_NNNN.json ({page_num, page_box, chunks}); {} if absent/unreadable."""
     path = ocr_dir_for(doc_name) / "layout" / f"page_{page_index:04d}.json"
     if not path.exists():
         return {}
@@ -61,8 +36,6 @@ def _is_doc_dir(p: Path) -> bool:
 
 
 def list_available_documents() -> List[str]:
-    """Stems whose OCR FINISHED (``<doc>.json`` marker present) under the OCR root — flat, or one category
-    level deep (see ``ocr_dir_for``). Unfinished doc dirs are skipped and named on stdout."""
     parent = config.BENCHMARK_OCR_PARENT
     if not parent.exists():
         return []
@@ -72,7 +45,7 @@ def list_available_documents() -> List[str]:
             continue
         if _is_doc_dir(p):
             doc_dirs.append(p)
-        else:  # a category folder
+        else:
             doc_dirs.extend(q for q in sorted(p.iterdir()) if q.is_dir() and _is_doc_dir(q))
     out, unfinished = [], []
     for p in doc_dirs:
@@ -83,7 +56,6 @@ def list_available_documents() -> List[str]:
 
 
 def _page_index(path: Path) -> int:
-    """page_0007.md -> 7."""
     try:
         return int(path.stem.split("_")[-1])
     except ValueError:
@@ -95,7 +67,7 @@ def _record(doc_name: str, page_number: int, markdown: str, html: str,
     return {
         "document_id": doc_name,
         "page_number": page_number,
-        "source_file": page_image_src,   # display only; this fork renders no PDFs
+        "source_file": page_image_src,
         "page_image_src": page_image_src,
         "layout": layout or {},
         "content": {"raw_markdown": markdown, "raw_html": html},
@@ -103,11 +75,6 @@ def _record(doc_name: str, page_number: int, markdown: str, html: str,
 
 
 def read_page_records(doc_name: str) -> List[Dict[str, Any]]:
-    """Load all pages for a document, sorted by page number.
-
-    Primary source: per-page `markdown/page_NNNN.md` (+ matching `html/page_NNNN.html`).
-    Fallback: the combined `<doc>.json` `pages[]` when per-page md files are absent.
-    """
     folder = ocr_dir_for(doc_name)
     if not folder.exists():
         raise FileNotFoundError(f"No OCR folder for document '{doc_name}': {folder}")
@@ -128,7 +95,6 @@ def read_page_records(doc_name: str) -> List[Dict[str, Any]]:
         records.sort(key=lambda r: int(r["page_number"]))
         return records
 
-    # Fallback: combined <doc>.json marker.
     marker = folder / f"{doc_name}.json"
     if marker.exists():
         data = json.loads(marker.read_text(encoding="utf-8"))
@@ -151,7 +117,6 @@ def read_page_records(doc_name: str) -> List[Dict[str, Any]]:
 
 
 def build_page_data(record: Dict[str, Any], page_image: str) -> PageData:
-    """Build a PageData from a raw page record + the on-disk page image path."""
     content = record.get("content") or {}
     return PageData(
         document_id=str(record.get("document_id", "")),

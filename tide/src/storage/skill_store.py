@@ -1,13 +1,3 @@
-"""
-Skill store — low-level file IO for the Skill Registry (spec §5).
-
-Registry:  skills/registry.json
-Records:   skills/records/<skill_id>/vNNNN.json  (immutable per version)
-
-v1 is read-only over the registry (higher-level API lives in src/registry/skill_registry.py).
-Write helpers for the deferred Phase B (save_as_fallback) are intentionally not implemented here.
-"""
-
 from __future__ import annotations
 
 import json
@@ -30,7 +20,6 @@ def read_registry() -> Dict[str, Any]:
 
 
 def read_record_by_relpath(relpath: str) -> Dict[str, Any]:
-    """Read a record given a path relative to skills/ (as stored in registry.json)."""
     path = config.SKILLS_DIR / relpath
     if not path.exists():
         raise SkillRegistryError(f"Skill record not found: {path}")

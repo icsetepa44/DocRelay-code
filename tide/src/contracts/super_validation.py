@@ -1,5 +1,3 @@
-"""SuperValidation contract."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -32,7 +30,7 @@ class SuperValidationIssue:
 @dataclass
 class SuperValidationResult:
     page_number: int
-    status: str = "clean"  # "clean" | "has_issues"
+    status: str = "clean"
     issues: List[SuperValidationIssue] = field(default_factory=list)
     continuation_review: List[BlockContinuation] = field(default_factory=list)
 

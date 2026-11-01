@@ -1,5 +1,3 @@
-"""ContinuationDecision (spec §4.7) and CarryState (spec §4.5)."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -10,14 +8,6 @@ from .common import SkillReference, to_dict
 
 @dataclass
 class BlockContinuation:
-    """One block's continuation decision. decision ∈ {continues, ends, uncertain}.
-
-    B1 fields (all optional, default-absent so older data / weak models still parse):
-      is_main_point            — this block is (a fragment of) a top-level MAIN numbered point.
-      expected_next_main_point — label expected to open the NEXT main point (e.g. "৩।", "3.").
-      continuation_hint        — short note on what remains open under this unit.
-    """
-
     block_id: str
     stitch_id: Optional[str]
     decision: str
@@ -41,7 +31,6 @@ class BlockContinuation:
 
     def to_dict(self) -> Dict[str, Any]:
         d = to_dict(self)
-        # Omit B1 signals when unset so pre-B1 data round-trips byte-identically.
         for k in ("is_main_point", "expected_next_main_point", "continuation_hint"):
             if d.get(k) is None:
                 d.pop(k, None)
@@ -69,19 +58,13 @@ class ContinuationDecision:
 
 @dataclass
 class OpenUnit:
-    """A logical unit still open across a page boundary (spec §4.5)."""
-
     stitch_id: str
     last_block_id: str
     block_type: str
     state: str
-    # Actual text of the still-open unit carried across the page boundary (head+tail,
-    # bounded by config.CARRY_OPEN_TEXT_MAX_CHARS). "" when enrichment is disabled.
     open_text: str = ""
     continuation_evidence: List[str] = field(default_factory=list)
     skills: List[SkillReference] = field(default_factory=list)
-    # B1: a main point stays open (across pages) until the next main point of equal/
-    # higher rank appears; these signals persist while only its sub-points stream.
     is_main_point: bool = False
     expected_next_main_point: Optional[str] = None
     continuation_hint: Optional[str] = None
@@ -104,13 +87,11 @@ class OpenUnit:
 
     def to_dict(self) -> Dict[str, Any]:
         d = to_dict(self)
-        # Omit B1 signals at default so pre-B1 carry state round-trips byte-identically.
         if not d.get("is_main_point"):
             d.pop("is_main_point", None)
         for k in ("expected_next_main_point", "continuation_hint"):
             if d.get(k) is None:
                 d.pop(k, None)
-        # Omit open_text when empty so pre-enrichment carry state round-trips byte-identically.
         if not d.get("open_text"):
             d.pop("open_text", None)
         return d
@@ -118,8 +99,6 @@ class OpenUnit:
 
 @dataclass
 class CarryState:
-    """What remains open going into the next page. Compact — no accumulated content."""
-
     from_page: int
     open_units: List[OpenUnit] = field(default_factory=list)
 

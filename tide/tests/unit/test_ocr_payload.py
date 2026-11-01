@@ -1,9 +1,3 @@
-"""Tests for the 'mixed' OCR format: markdown prose + inline HTML tables, order preserved.
-
-Covers ``mixed_ocr_text`` (the parser-based normalizer) and the ``page_text_payload``
-'mixed' branch that feeds every LLM stage.
-"""
-
 from types import SimpleNamespace
 
 from src.stages._common import mixed_ocr_text, page_text_payload
@@ -16,7 +10,7 @@ TABLE = (
 
 def test_prose_only_is_unchanged():
     md = "#### Rule 4\n\nThe Commissioner may allow the goods.\n\n- point ka\n- point kha"
-    assert mixed_ocr_text(md) == md  # fast path: no table, returned verbatim
+    assert mixed_ocr_text(md) == md
 
 
 def test_prose_plus_table_keeps_prose_table_and_order():
@@ -26,7 +20,6 @@ def test_prose_plus_table_keeps_prose_table_and_order():
     assert "Outro prose after the form." in out
     assert "<table>" in out and "</table>" in out
     assert "<td>Name</td>" in out
-    # reading order preserved: prose -> table -> prose
     assert out.find("Intro prose") < out.find("<table>") < out.find("Outro prose")
 
 
@@ -39,7 +32,7 @@ def test_table_with_attributes_and_thead_tbody_preserved():
     out = mixed_ocr_text(md)
     assert "<thead>" in out and "<tbody>" in out
     assert "<th>Item</th>" in out
-    assert 'border="1"' in out  # attributes survive
+    assert 'border="1"' in out
 
 
 def test_two_tables_with_prose_between_keep_order():
@@ -57,8 +50,8 @@ def test_two_tables_with_prose_between_keep_order():
 
 def test_malformed_unclosed_table_does_not_crash_and_yields_table():
     md = "Before.\n\n<table><tr><td>x</td><td>y</td></tr>\n\nAfter text with no close."
-    out = mixed_ocr_text(md)  # must not raise
-    assert "<table>" in out          # bs4 emits a (normalized) table
+    out = mixed_ocr_text(md)
+    assert "<table>" in out
     assert "Before." in out
 
 
@@ -68,8 +61,8 @@ def test_payload_mixed_returns_single_markdown_key():
         html="<p>Prose.</p>" + TABLE + "<p>More prose.</p>",
     )
     out = page_text_payload(page, "mixed")
-    assert set(out.keys()) == {"markdown"}          # no separate 'html' key
-    assert "<table>" in out["markdown"]              # table kept inline
+    assert set(out.keys()) == {"markdown"}
+    assert "<table>" in out["markdown"]
     assert "Prose." in out["markdown"]
 
 
@@ -78,5 +71,4 @@ def test_payload_existing_modes_unchanged():
     assert page_text_payload(page, "markdown") == {"markdown": "MD"}
     assert page_text_payload(page, "html") == {"html": "HTML"}
     assert page_text_payload(page, "both") == {"markdown": "MD", "html": "HTML"}
-    # unknown value guards back to 'both'
     assert page_text_payload(page, "bogus") == {"markdown": "MD", "html": "HTML"}

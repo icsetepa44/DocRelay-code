@@ -1,5 +1,3 @@
-"""ContinuationDecision (spec §4.7) and CarryState (spec §4.5)."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -10,8 +8,6 @@ from .common import SkillReference, to_dict
 
 @dataclass
 class BlockContinuation:
-    """One block's continuation decision. decision ∈ {continues, ends, uncertain}."""
-
     block_id: str
     stitch_id: Optional[str]
     decision: str
@@ -51,14 +47,10 @@ class ContinuationDecision:
 
 @dataclass
 class OpenUnit:
-    """A logical unit still open across a page boundary (spec §4.5)."""
-
     stitch_id: str
     last_block_id: str
     block_type: str
     state: str
-    # Actual text of the still-open unit carried across the page boundary (head+tail,
-    # bounded by config.CARRY_OPEN_TEXT_MAX_CHARS). "" when enrichment is disabled.
     open_text: str = ""
     continuation_evidence: List[str] = field(default_factory=list)
     skills: List[SkillReference] = field(default_factory=list)
@@ -77,7 +69,6 @@ class OpenUnit:
 
     def to_dict(self) -> Dict[str, Any]:
         d = to_dict(self)
-        # Omit open_text when empty so carry state round-trips compactly.
         if not d.get("open_text"):
             d.pop("open_text", None)
         return d
@@ -85,8 +76,6 @@ class OpenUnit:
 
 @dataclass
 class CarryState:
-    """What remains open going into the next page. Compact — no accumulated content."""
-
     from_page: int
     open_units: List[OpenUnit] = field(default_factory=list)
 

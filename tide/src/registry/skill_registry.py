@@ -1,10 +1,3 @@
-"""
-Skill Registry — object API over skills/registry.json + immutable records (spec §5).
-
-v1 is read-only. Records are loaded into SkillRecord objects and looked up by
-(skill_id, version) or latest-per-skill.
-"""
-
 from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -18,7 +11,7 @@ class SkillRegistry:
     def __init__(self) -> None:
         self._by_version: Dict[Tuple[str, int], SkillRecord] = {}
         self._latest: Dict[str, SkillRecord] = {}
-        self._status: Dict[str, str] = {}  # skill_id -> registry status (latest)
+        self._status: Dict[str, str] = {}
         self._load()
 
     def _load(self) -> None:
@@ -30,7 +23,6 @@ class SkillRegistry:
             self._latest[skill_id] = record
             self._status[skill_id] = str(entry.get("status", record.status))
 
-    # ---- lookups ----
 
     def get(self, skill_id: str, version: Optional[int] = None) -> SkillRecord:
         if version is None:
@@ -39,7 +31,6 @@ class SkillRegistry:
             return self._latest[skill_id]
         key = (skill_id, int(version))
         if key not in self._by_version:
-            # fall back to latest if the exact version is missing
             if skill_id in self._latest:
                 return self._latest[skill_id]
             raise SkillRegistryError(f"Unknown skill {skill_id} v{version}")
@@ -49,7 +40,6 @@ class SkillRegistry:
         return [r for sid, r in self._latest.items() if self._status.get(sid) == status]
 
     def resolve(self, selected: Iterable[Any]) -> List[SkillRecord]:
-        """Resolve SelectedSkill objects / dicts / SkillReference to SkillRecords."""
         out: List[SkillRecord] = []
         seen = set()
         for item in selected:

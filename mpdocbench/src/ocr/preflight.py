@@ -1,17 +1,3 @@
-"""Read-only OCR preflight for a benchmark run (no LLM, no API, writes only its own report).
-
-Run before a billed pipeline run (run.py RUN_OCR_PREFLIGHT) over the selected documents under
-config.BENCHMARK_OCR_PARENT. Two severities:
-
-- HARD (the run must not start): no OCR folder, no completion marker (<doc>.json), no pages, per-page
-  markdown / layout / page_images counts that disagree, a missing page image, or no gold entry (the doc
-  could never be scored).
-- SOFT (reported, the run proceeds): near-empty pages, pages whose LLM payload exceeds the payload clip
-  (`_common.MAX_TEXT_CHARS`; the tail is not sent), and suspected inline OCR repetition loops.
-
-Also totals pages / characters / a rough input-token estimate per page payload, and a domain breakdown.
-"""
-
 from __future__ import annotations
 
 import re
@@ -24,8 +10,6 @@ from src.ocr.chandra_adapter import ocr_dir_for
 from src.stages._common import MAX_TEXT_CHARS, mixed_ocr_text
 
 NEAR_EMPTY_CHARS = 20
-# A >=8-char chunk repeated back-to-back 20+ times (e.g. ", no, no, no ..."); repeated HTML table rows are
-# legitimate and are not matched because each row differs.
 _INLINE_LOOP = re.compile(r"(.{8,60}?)\1{20,}", re.S)
 
 
@@ -36,8 +20,7 @@ def _page_files(folder: Path, sub: str, pattern: str) -> List[Path]:
 
 def check_document(doc: str, gold_stems: Optional[Set[str]] = None,
                    clip_chars: int = MAX_TEXT_CHARS) -> Dict[str, Any]:
-    """Preflight one document. Returns {doc, domain, pages, chars, payload_chars, hard[], soft{...}}."""
-    folder = ocr_dir_for(doc)  # flat or category-nested OCR root
+    folder = ocr_dir_for(doc)
     rec: Dict[str, Any] = {"doc": doc, "domain": config.domain_for(doc), "pages": 0, "chars": 0,
                            "payload_chars": 0, "hard": [],
                            "soft": {"near_empty": [], "over_clip": [], "repetition": []}}
@@ -80,7 +63,6 @@ def check_document(doc: str, gold_stems: Optional[Set[str]] = None,
 
 def run_preflight(docs: Iterable[str], gold_stems: Optional[Set[str]] = None,
                   clip_chars: int = MAX_TEXT_CHARS) -> Dict[str, Any]:
-    """Preflight every doc; returns {ok, summary, hard, soft, docs}. Pure read-only."""
     recs = [check_document(d, gold_stems, clip_chars) for d in docs]
     hard = [{"doc": r["doc"], "problem": p} for r in recs for p in r["hard"]]
     soft: Dict[str, List[Any]] = {"near_empty": [], "over_clip": [], "repetition": []}
@@ -94,7 +76,6 @@ def run_preflight(docs: Iterable[str], gold_stems: Optional[Set[str]] = None,
         "n_docs": len(recs),
         "n_pages": sum(r["pages"] for r in recs),
         "ocr_chars": sum(r["chars"] for r in recs),
-        # ~4 chars/token for English; the OCR text per LLM call, before images, prompts and JSON.
         "est_page_text_tokens": payload // 4,
         "by_domain": dict(sorted(Counter(r["domain"] or "?" for r in recs).items())),
         "pages_by_domain": dict(sorted(

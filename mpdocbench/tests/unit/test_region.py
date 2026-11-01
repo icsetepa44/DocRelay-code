@@ -31,7 +31,7 @@ def test_region_skill_selection_union_and_schema():
          "coverage": "partial"}]}
     s = RegionSkillSelection.from_dict(d)
     Draft202012Validator(_schema("region_skill_selection")).validate(s.to_dict())
-    assert [x.skill_id for x in s.all_selected_skills()] == ["numbered_point", "table"]  # de-duped
+    assert [x.skill_id for x in s.all_selected_skills()] == ["numbered_point", "table"]
 
 
 def test_region_skill_selection_schema_rejects_bad_coverage():
@@ -51,9 +51,9 @@ def test_region_analyzer_normalize_reassigns_ids_and_validates_stitch():
     ]}
     page = PageData("doc", 3, "x.png", "md", "html")
     ra = region_analyzer._normalize(raw, page, carry)
-    assert [r.region_id for r in ra.regions] == ["r001", "r002"]           # ids reassigned
-    assert ra.regions[0].continuation_context == {"stitch_id": "doc:s000007"}  # valid carry stitch kept
-    assert ra.regions[1].continuation_context is None                     # invented stitch dropped
+    assert [r.region_id for r in ra.regions] == ["r001", "r002"]
+    assert ra.regions[0].continuation_context == {"stitch_id": "doc:s000007"}
+    assert ra.regions[1].continuation_context is None
 
 
 def test_route_regions_parses_per_region(monkeypatch):

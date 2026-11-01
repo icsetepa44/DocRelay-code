@@ -1,12 +1,3 @@
-"""
-Region Analyzer (region retrieval mode only). Decomposes a page into logical regions
-whose descriptions drive per-region skill retrieval. It does NOT produce final blocks.
-
-App-side normalization: region_ids are reassigned deterministically (r001, r002, …) and a
-region's continuation_context.stitch_id is kept only if it matches a CarryState open unit
-(the model may not invent stitch ids).
-"""
-
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -48,10 +39,10 @@ def analyze(
     model_override: Optional[Dict[str, Any]] = None,
     domain: Optional[str] = None,
 ) -> RegionAnalysis:
-    layout = layout_payload(page.layout)  # LAPDoc SpatialFormat; "" when no usable layout
+    layout = layout_payload(page.layout)
     system = render_prompt(
         "region_analyzer",
-        domain=domain,  # per-domain profile guidance + optional prompt override
+        domain=domain,
         ocr_format_note=format_guidance(config.OCR_INPUT_FORMAT),
         layout_note=layout_guidance(bool(layout)),
     )

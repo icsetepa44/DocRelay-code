@@ -1,9 +1,3 @@
-"""Cost/time ledger (src/llm/usage.py + the client hook). Hermetic: the OpenAI client is faked, no API.
-
-Proves: one tagged line per HTTP attempt with the provider-reported cost and tokens; a retried call logs both
-attempts; usage accounting is requested without dropping the provider pin; nothing is written (and nothing breaks)
-when no ledger is active; worker threads keep their own tags."""
-
 import json
 import threading
 from types import SimpleNamespace
@@ -27,7 +21,6 @@ def _response(text='{"ok": 1}', cost=0.0012, extra_cost=None):
 
 
 class FakeOpenAI:
-    """Stands in for openai.OpenAI: answers from a script of responses / exceptions and keeps every request."""
     script, requests = [], []
 
     def __init__(self, **kw):
@@ -104,7 +97,7 @@ def test_no_ledger_no_write(fake, tmp_path):
     fake.script = [_response()]
     assert _call() == '{"ok": 1}'
     assert not (tmp_path / "_cost_time").exists()
-    usage.record(model="x", status="ok")  # a stray record without a ledger is a no-op
+    usage.record(model="x", status="ok")
     usage.append(usage.PAIRS_FILE, {"doc": "x"})
 
 

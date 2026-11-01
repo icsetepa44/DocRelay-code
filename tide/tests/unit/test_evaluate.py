@@ -1,6 +1,3 @@
-"""End-to-end tests for the evaluator (src/eval/evaluate.py): gold placeholders, regression identity with
-the original evaluator, read-only inputs, and the legacy single-model run layout."""
-
 import hashlib
 import json
 from pathlib import Path
@@ -19,14 +16,12 @@ def _unit(uid, bt, content, parent=None):
             "source_block_ids": []}
 
 
-# ---------------- FIX-1a / FIX-1c: gold placeholders ----------------
-
 def test_gold_placeholder_strip_and_expand(tmp_path):
     gold = {
         "parsed_text": [
             {"type": "clause", "text": "1. Goods listed below are exempt. [table_1] Subject to conditions."},
-            {"type": "clause", "text": "[TABLE_2]"},  # table-only clause
-            {"type": "clause", "text": "2. See [Table Header: Serial | Name] for format."},  # annotator prose
+            {"type": "clause", "text": "[TABLE_2]"},
+            {"type": "clause", "text": "2. See [Table Header: Serial | Name] for format."},
             {"type": "metadata", "text": "Page 3", "metadata_category": "page"},
             {"type": "clause", "text": "3. Missing table [table_9] here."},
         ],
@@ -39,21 +34,18 @@ def test_gold_placeholder_strip_and_expand(tmp_path):
     g = evaluate.load_gold(_write(tmp_path / "g.json", gold))
     texts = [it["text"] for it in g["items"]]
     assert texts[0] == "1. Goods listed below are exempt.   Subject to conditions."
-    assert "[Table Header: Serial | Name]" in texts[1]  # untouched
-    assert len(g["items"]) == 3  # table-only clause dropped, page item excluded
+    assert "[Table Header: Serial | Name]" in texts[1]
+    assert len(g["items"]) == 3
     assert g["stats"]["table_only_items"] == 1
     assert g["stats"]["excluded_page_items"] == 1
     assert g["stats"]["unresolved_placeholders"] == 1
     assert g["stats"].get("strip_mismatch", 0) == 0
     full = g["full_text"]
-    assert full.index("Horses") < full.index("Subject to conditions")  # expanded in place
+    assert full.index("Horses") < full.index("Subject to conditions")
     assert "unref" in full and "table_1" not in full.lower().replace(" ", "")
 
 
-# ---------------- regression identity with the ORIGINAL evaluator ----------------
-
 def _identity_case(tmp_path):
-    """No tables, short text: none of the four fixes applies, so the scores must equal the original's."""
     gold = {"parsed_text": [
         {"type": "metadata", "text": "Government of the People's Republic of Bangladesh National Board of Revenue"},
         {"type": "clause", "text": "1. In exercise of the powers conferred by section 19 the Government is pleased to exempt the goods."},
@@ -72,7 +64,6 @@ def _identity_case(tmp_path):
     return _write(tmp_path / "gold.json", gold), fd
 
 
-# Metrics of the earlier evaluator version on _identity_case (frozen regression fixture).
 ORIGINAL_EVALUATOR_METRICS = {
     "cer_clause_mean": 0.1142, "classification_accuracy": 1.0, "clause_f1": 0.8, "clause_precision": 0.6667,
     "clause_recall": 1.0, "confusion": {"clause->clause": 2, "metadata->metadata": 2},
@@ -92,8 +83,6 @@ def test_regression_identity_with_the_original_evaluator(tmp_path):
     for k, v in ORIGINAL_EVALUATOR_METRICS.items():
         assert m[k] == v, f"{k}: original {v} != now {m[k]}"
 
-
-# ---------------- end-to-end on a tiny run ----------------
 
 def _tree_hash(root: Path) -> dict:
     return {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()

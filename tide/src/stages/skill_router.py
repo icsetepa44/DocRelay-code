@@ -1,13 +1,3 @@
-"""
-Skill Router (spec §8.3, §9).
-
-- `route` (page mode): one page-wide SkillSelection from page-level candidates.
-- `route_regions` (region mode): a per-region RegionSkillSelection; the router still sees
-  the full page but decides skills + coverage independently for each region, choosing only
-  from that region's RAG candidates. Per-region FALLBACK retrieval is a future hook (no
-  fallback skills exist yet), so a region with coverage != sufficient simply proceeds.
-"""
-
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional

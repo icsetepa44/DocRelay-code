@@ -1,18 +1,3 @@
-"""
-Structured-output layer: build per-role request configs, call the LLM, extract the
-JSON object, validate it against a JSON Schema, and (on failure) do one corrective
-re-ask. This compensates for the client only supporting `json_object` (not provider
-`json_schema`).
-
-    obj = request_json(
-        role="extractor",
-        system_prompt=...,
-        user_prompt=...,
-        schema_name="page_extraction",
-        images=[pil_page_image],
-    )
-"""
-
 from __future__ import annotations
 
 import json
@@ -26,10 +11,6 @@ from src.core import config
 from src.core.exceptions import StructuredOutputError
 from src.llm.client import LLMRequestConfig, chat_completion
 
-
-# ------------------------------------------------------------------
-# Request-config factory (globals -> LLMRequestConfig)
-# ------------------------------------------------------------------
 
 def build_request_config(
     role: str,
@@ -51,30 +32,15 @@ def build_request_config(
     )
 
 
-# ------------------------------------------------------------------
-# JSON parsing + schema validation
-# ------------------------------------------------------------------
-
 def _salvage_json(text: str) -> Optional[Dict[str, Any]]:
-    """Last-resort STRUCTURE-ONLY repair of a nearly-valid JSON object (C1).
-
-    Two safe repairs, neither of which ever alters text inside a string (so model
-    content is never invented or changed):
-      * a TRUNCATED object (the model was cut off mid-output, e.g. hit the token cap)
-        is trimmed back to the last completed nested container and its still-open
-        brackets are closed — this recovers the blocks that DID finish instead of
-        losing the whole page;
-      * a trailing comma right before a `}`/`]` is dropped.
-    Returns the parsed dict, or None if it still cannot be parsed.
-    """
     start = text.find("{")
     if start < 0:
         return None
     out: List[str] = []
-    stack: List[str] = []          # expected closing brackets, outermost first
+    stack: List[str] = []
     in_str = False
     escape = False
-    last_complete = None            # (len(out), open-stack) just after a nested container closed
+    last_complete = None
     for ch in text[start:]:
         if in_str:
             out.append(ch)
@@ -92,7 +58,7 @@ def _salvage_json(text: str) -> Optional[Dict[str, Any]]:
             stack.append("}" if ch == "{" else "]")
             out.append(ch)
         elif ch in "}]":
-            k = len(out) - 1                      # structure-aware trailing-comma removal
+            k = len(out) - 1
             while k >= 0 and out[k] in " \t\r\n":
                 k -= 1
             if k >= 0 and out[k] == ",":
@@ -100,7 +66,7 @@ def _salvage_json(text: str) -> Optional[Dict[str, Any]]:
             out.append(ch)
             if stack:
                 stack.pop()
-            if not stack:                          # completed the whole top-level object
+            if not stack:
                 try:
                     return json.loads("".join(out))
                 except json.JSONDecodeError:
@@ -108,7 +74,7 @@ def _salvage_json(text: str) -> Optional[Dict[str, Any]]:
             last_complete = (len(out), list(stack))
         else:
             out.append(ch)
-    if last_complete is None:                      # truncated with no completed container
+    if last_complete is None:
         return None
     cut_len, open_stack = last_complete
     repaired = out[:cut_len]
@@ -125,7 +91,6 @@ def _salvage_json(text: str) -> Optional[Dict[str, Any]]:
 
 
 def extract_json_object(text: str) -> Dict[str, Any]:
-    """Direct JSON parse; else the largest {...} object; else a structure-only salvage (C1)."""
     text = (text or "").strip()
     try:
         return json.loads(text)
@@ -137,7 +102,7 @@ def extract_json_object(text: str) -> Dict[str, Any]:
             return json.loads(match.group(0))
         except json.JSONDecodeError:
             pass
-    salvaged = _salvage_json(text)          # C1: recover truncated/trailing-comma output
+    salvaged = _salvage_json(text)
     if salvaged is not None:
         return salvaged
     if not match:
@@ -147,7 +112,6 @@ def extract_json_object(text: str) -> Dict[str, Any]:
 
 @lru_cache(maxsize=32)
 def load_schema(schema_name: str) -> str:
-    """Load schemas/<name>.schema.json (returns JSON text; cached)."""
     path = config.SCHEMAS_DIR / f"{schema_name}.schema.json"
     return path.read_text(encoding="utf-8")
 
@@ -174,7 +138,6 @@ def validate(obj: Any, schema_name: str) -> None:
 
 
 def _set_at_path(root: Any, path: Any, value: Any) -> None:
-    """Set `root` at a jsonschema error path (deque of keys/indices) to `value` (best-effort)."""
     keys = list(path)
     if not keys:
         return
@@ -188,12 +151,6 @@ def _set_at_path(root: Any, path: Any, value: Any) -> None:
 
 
 def _coerce_null_strings(obj: Any, schema_name: str) -> bool:
-    """Heal a `null` where the schema requires a non-null string by setting it to "".
-
-    Uses the validator's own type errors to locate exactly those paths, so valid content is never
-    altered. Returns True if anything changed. Robustness net for models that echo `null` for a
-    field they had no input for (the mixed-OCR ``"html": null`` class of failure — FAILURE_ANALYSIS_V8).
-    """
     changed = False
     for err in _validator(schema_name).iter_errors(obj):
         if err.validator == "type" and err.instance is None:
@@ -205,10 +162,6 @@ def _coerce_null_strings(obj: Any, schema_name: str) -> bool:
     return changed
 
 
-# ------------------------------------------------------------------
-# The main helper: call -> parse -> validate -> (corrective re-ask)
-# ------------------------------------------------------------------
-
 def request_json(
     *,
     role: str,
@@ -216,7 +169,7 @@ def request_json(
     user_prompt: str,
     schema_name: str,
     images: Optional[List[Any]] = None,
-    max_repair: int = 2,  # C1: 3 total attempts (was 2) — one extra corrective re-ask
+    max_repair: int = 2,
     model_override: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     cfg = build_request_config(role, model_override=model_override)
@@ -243,10 +196,8 @@ def request_json(
             try:
                 validate(obj, schema_name)
             except StructuredOutputError:
-                # Robustness: heal `null`-where-a-string-is-required before giving up on this
-                # attempt (belt-and-suspenders with the nullable-field schemas).
                 if _coerce_null_strings(obj, schema_name):
-                    validate(obj, schema_name)  # re-validate; may still raise -> corrective re-ask
+                    validate(obj, schema_name)
                 else:
                     raise
             return obj

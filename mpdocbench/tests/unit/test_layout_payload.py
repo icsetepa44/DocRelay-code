@@ -1,9 +1,3 @@
-"""layout payload (LAPDoc SpatialFormat) helpers + region_analyzer injection. No LLM.
-
-Covers ordering / typing / normalization of `layout_regions`, the whitespace SpatialFormat rendering
-of `layout_payload`, the `{{layout_note}}` prompt token, and that `region_analyzer.analyze` injects the
-layout string into what the model sees (and omits it for a layout-less page)."""
-
 import pytest
 
 from src.contracts.continuation import CarryState
@@ -22,12 +16,10 @@ def _layout():
     ]}
 
 
-# --------------------------------------------------------------------------- layout_regions
 def test_layout_regions_ordering_typing_normalization():
     regs = _common.layout_regions(_layout())
-    assert [r["region_id"] for r in regs] == ["L001", "L002", "L003", "L004"]  # reading order kept
-    assert [r["type"] for r in regs] == ["heading", "text", "figure", "other"]  # label map + fallback
-    # page_box 1000x1000 -> box == bbox; HTML stripped + whitespace collapsed
+    assert [r["region_id"] for r in regs] == ["L001", "L002", "L003", "L004"]
+    assert [r["type"] for r in regs] == ["heading", "text", "figure", "other"]
     assert regs[0]["box"] == [50, 100, 150, 130] and regs[0]["text"] == "Title"
     assert regs[1]["box"] == [50, 200, 500, 260] and regs[1]["text"] == "Body text here."
     assert regs[2]["text"] == "a chart"
@@ -43,33 +35,29 @@ def test_layout_regions_clamps_and_snippet_cap():
     layout = {"page_box": [0, 0, 100, 100],
               "chunks": [{"bbox": [-10, 0, 200, 50], "label": "Text", "content": "z" * 500}]}
     r = _common.layout_regions(layout)[0]
-    assert r["box"] == [0, 0, 1000, 500]                 # clamped to [0,1000]
-    assert len(r["text"]) == _common._LAYOUT_SNIPPET_CHARS  # snippet capped
+    assert r["box"] == [0, 0, 1000, 500]
+    assert len(r["text"]) == _common._LAYOUT_SNIPPET_CHARS
 
 
 def test_layout_regions_edge_cases():
     assert _common.layout_regions({}) == []
-    assert _common.layout_regions({"chunks": [{"bbox": [1, 2, 3, 4], "label": "Text"}]}) == []  # no page_box
+    assert _common.layout_regions({"chunks": [{"bbox": [1, 2, 3, 4], "label": "Text"}]}) == []
     assert _common.layout_regions({"page_box": [0, 0, 0, 100], "chunks": [
-        {"bbox": [1, 2, 3, 4], "label": "Text"}]}) == []                                        # zero width
-    # a chunk with <4 bbox coords is skipped, others survive
+        {"bbox": [1, 2, 3, 4], "label": "Text"}]}) == []
     regs = _common.layout_regions({"page_box": [0, 0, 100, 100], "chunks": [
         {"bbox": [1, 2], "label": "Text", "content": "bad"},
         {"bbox": [1, 2, 3, 4], "label": "Text", "content": "ok"}]})
     assert len(regs) == 1 and regs[0]["region_id"] == "L001" and regs[0]["text"] == "ok"
 
 
-# --------------------------------------------------------------------------- layout_payload
 def test_layout_payload_spatial_rendering():
     s = _common.layout_payload(_layout())
     assert isinstance(s, str) and s.splitlines()[0].startswith("Page layout")
     assert "[heading 50,100-150,130] Title" in s
-    # indentation grows with x0: the figure (x0=520) is indented far more than the heading (x0=50)
     fig_line = next(ln for ln in s.splitlines() if "[figure" in ln)
     head_line = next(ln for ln in s.splitlines() if "[heading" in ln)
     assert (len(fig_line) - len(fig_line.lstrip())) > (len(head_line) - len(head_line.lstrip()))
     assert (len(head_line) - len(head_line.lstrip())) == 50 // _common._LAYOUT_INDENT_DIV
-    # a big vertical gap (y1=400 -> next y0=900) inserts a blank line
     assert "\n\n" in s
 
 
@@ -78,23 +66,20 @@ def test_layout_payload_empty():
     assert _common.layout_payload({"page_box": [0, 0, 0, 0], "chunks": []}) == ""
 
 
-# --------------------------------------------------------------------------- layout_guidance
 def test_layout_guidance_present_vs_absent():
     present, absent = _common.layout_guidance(True), _common.layout_guidance(False)
     assert present != absent and "layout" in present.lower() and absent
 
 
-# --------------------------------------------------------------------------- prompt token
 def test_region_prompt_substitutes_layout_note():
     rendered = render_prompt("region_analyzer",
                              ocr_format_note=_common.format_guidance("mixed"),
                              layout_note=_common.layout_guidance(True))
-    assert "{{" not in rendered                       # both tokens substituted
-    assert "provides no bounding boxes" not in rendered  # the old contradicting line is gone
+    assert "{{" not in rendered
+    assert "provides no bounding boxes" not in rendered
     assert "reading order" in rendered.lower()
 
 
-# --------------------------------------------------------------------------- analyze injection
 def test_analyze_injects_layout(monkeypatch):
     cap = {}
 
@@ -108,9 +93,8 @@ def test_analyze_injects_layout(monkeypatch):
     page = PageData("doc", 1, "x.png", "md", "html", layout=_layout())
     region_analyzer.analyze(page, CarryState.empty())
     assert '"layout"' in cap["user_prompt"] and "[heading 50,100-150,130]" in cap["user_prompt"]
-    assert "reading order" in cap["system_prompt"].lower()  # layout_note landed in the system prompt
+    assert "reading order" in cap["system_prompt"].lower()
 
-    # back-compat: a page with no layout -> no `layout` key, absent-note in system prompt
     cap.clear()
     region_analyzer.analyze(PageData("doc", 1, "x.png", "md", "html"), CarryState.empty())
     assert '"layout"' not in cap["user_prompt"]

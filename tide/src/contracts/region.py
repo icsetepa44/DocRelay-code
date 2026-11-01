@@ -1,11 +1,3 @@
-"""
-Region-based retrieval contracts (used only when retrieval.mode == "region").
-
-RegionAnalysis      — logical regions of a page (produced by the Region Analyzer;
-                      NOT final blocks — guidance for retrieval + extraction).
-RegionSkillSelection — per-region skills + coverage (produced by the region-aware router).
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -18,8 +10,8 @@ from .skill import SelectedSkill
 class Region:
     region_id: str
     description: str
-    source_reference: Dict[str, str] = field(default_factory=dict)   # {markdown, html}
-    continuation_context: Optional[Dict[str, Any]] = None            # None | {"stitch_id": ...}
+    source_reference: Dict[str, str] = field(default_factory=dict)
+    continuation_context: Optional[Dict[str, Any]] = None
 
     @staticmethod
     def from_dict(d: Dict[str, Any]) -> "Region":
@@ -101,7 +93,6 @@ class RegionSkillSelection:
         return {"page_number": self.page_number, "regions": [r.to_dict() for r in self.regions]}
 
     def all_selected_skills(self) -> List[SelectedSkill]:
-        """Flat, de-duplicated union of selected skills across all regions (for resolve)."""
         seen = set()
         out: List[SelectedSkill] = []
         for reg in self.regions:

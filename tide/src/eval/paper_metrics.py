@@ -1,16 +1,3 @@
-"""The TIDE metrics reported in the paper, for one finished and evaluated run.
-
-    Text Edit   1 - mean(doc_edit_similarity) over documents with a non-empty gold annotation (lower is better)
-    Table TEDS  100 * mean(table_teds) over documents with gold tables (higher is better)
-    C-P         cross-page text edit (src/eval/cp_edit.py; lower is better)
-    C-P F1      cross-page merge score from the page-boundary labels (src/eval/boundary_labels.py), pooled over all
-                boundaries: carried = TP, merge = FP, split = FN; precision and recall alongside (higher is better)
-
-Reads <run>/_eval/metrics.json and <run>/_eval/final_documents/ (both written by evaluate.evaluate_run) and the
-run's own page files. Writes <run>/_eval/paper_metrics.json and <run>/_eval/boundary_labels.csv.
-Measurement only: no model calls.
-"""
-
 from __future__ import annotations
 
 import csv
@@ -24,7 +11,6 @@ from src.eval import boundary_labels, cp_edit
 
 
 def text_and_tables(metrics: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-    """Text Edit and Table TEDS per extractor model, from evaluate.evaluate_run's metrics.json."""
     out = {}
     for label, docs in (metrics.get("results") or {}).items():
         scorable = {k: d for k, d in docs.items()
@@ -44,7 +30,6 @@ def _f1(tp: int, fp: int, fn: int) -> float:
 
 
 def merge_scores(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """C-P precision / recall / F1 from boundary rows, pooled over all boundaries (micro)."""
     tp = sum(1 for r in rows if r["outcome"] == "carried")
     fp = sum(1 for r in rows if r["outcome"] == "merge")
     fn = sum(1 for r in rows if r["outcome"] == "split")
@@ -54,7 +39,6 @@ def merge_scores(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def compute(run_dir: Path, eval_dir: Optional[Path] = None, gold_root: Optional[Path] = None) -> Dict[str, Any]:
-    """All paper metrics of one run; writes paper_metrics.json + boundary_labels.csv into eval_dir."""
     run_dir = Path(run_dir)
     eval_dir = Path(eval_dir) if eval_dir else run_dir / config.EVAL_SUBDIR
     gold_root = Path(gold_root or config.BENCHMARK_GOLD_ROOT)

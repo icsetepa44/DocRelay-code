@@ -26,9 +26,8 @@ def test_stitched_fragments_merge_and_parent_links():
 
     units = {u.unit_id: u for u in fd.units}
     merged = units["doc:s000001"]
-    assert isinstance(merged.content, list) and len(merged.content) == 2  # no flatten
+    assert isinstance(merged.content, list) and len(merged.content) == 2
     assert merged.source_block_ids == ["doc:p0000:b0002", "doc:p0001:b0001"]
-    # child table's parent unit is the stitched point (parent-child preserved)
     assert units["doc:p0001:b0002"].parent_unit_id == "doc:s000001"
 
 

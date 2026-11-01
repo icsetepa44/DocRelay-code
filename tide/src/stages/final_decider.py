@@ -1,8 +1,3 @@
-"""
-FinalDecider stage — repairs, refines, and finalizes a draft PageExtraction
-based on the SuperValidator's critique and raw source inputs.
-"""
-
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
@@ -19,7 +14,6 @@ from src.stages.extractor import normalize_extraction
 
 
 def _enforce_subpoint_hierarchy(extraction: PageExtraction, carry_state: CarryState) -> PageExtraction:
-    """Guarantee that orphaned sub-points are attached to their parent rule or open CarryState unit."""
     last_main_rule_id = None
     open_main = next(
         (u for u in carry_state.open_units if getattr(u, "is_main_point", False) or u.block_type == "text_block"),

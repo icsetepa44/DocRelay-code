@@ -1,17 +1,8 @@
-"""
-Shared contract primitives: SkillReference, enum value sets, and small helpers.
-
-Contracts are plain frozen dataclasses (stdlib) with from_dict/to_dict. They are the
-canonical typed representation; loose LLM JSON is coerced into them by the stage
-wrappers / structured_output layer, not here.
-"""
-
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional
 
-# ---- enum value sets (kept as plain tuples; LLM output is validated against these) ----
 
 COVERAGE_VALUES = ("sufficient", "partial", "insufficient")
 CONTINUATION_DECISIONS = ("continues", "ends", "uncertain")
@@ -33,14 +24,11 @@ PAGE_ISSUE_TYPES = (
 
 
 def to_dict(obj: Any) -> Any:
-    """Recursively convert a dataclass (with nested dataclasses/lists) to plain dict."""
     return asdict(obj)
 
 
 @dataclass(frozen=True)
 class SkillReference:
-    """A lightweight reference to a particular skill version (spec §4.2)."""
-
     skill_id: str
     version: int
 

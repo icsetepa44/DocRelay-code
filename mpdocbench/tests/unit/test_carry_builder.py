@@ -35,11 +35,11 @@ def test_allocates_new_stitch_for_continuing_block():
 
 def test_reuses_existing_stitch_id():
     pe = _extraction()
-    pe.blocks[1].stitch_id = "doc:s000009"  # continuing from a previous page
+    pe.blocks[1].stitch_id = "doc:s000009"
     alloc = StitchIdAllocator("doc", start=9)
     cs = carry_builder.build_carry_state(pe, pe.continuation, alloc)
-    assert pe.blocks[1].stitch_id == "doc:s000009"       # reused, not reallocated
-    assert alloc.issued == 9                              # nothing allocated
+    assert pe.blocks[1].stitch_id == "doc:s000009"
+    assert alloc.issued == 9
     assert cs.open_units[0].stitch_id == "doc:s000009"
 
 
@@ -63,16 +63,12 @@ def _table_extraction():
 
 
 def test_open_table_carries_real_state_and_open_text():
-    """T6: an open table must carry its actual cells in state/open_text, not the boilerplate,
-    so the next page can recognize and stitch the continuation."""
     pe = _table_extraction()
     alloc = StitchIdAllocator("doc")
     cs = carry_builder.build_carry_state(pe, pe.continuation, alloc)
     u = cs.open_units[0]
     assert u.block_type == "table"
-    # NOT the generic boilerplate; the real cells are present in the short state preview.
     assert "continues onto the next page" not in u.state
     assert "ক্রমিক" in u.state and "চাল" in u.state
-    # open_text is enrichment-gated; when enabled it accumulates the flattened cells.
     if config.CARRY_OPEN_TEXT_MAX_CHARS > 0:
         assert u.open_text and "পণ্য" in u.open_text and "ডাল" in u.open_text

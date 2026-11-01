@@ -1,12 +1,3 @@
-"""
-Extractor (spec §8.4, §10). Extracts ONLY the current page into the global block
-schema, then the wrapper normalizes IDs (spec §3): it assigns canonical block_ids by
-reading order, remaps parent_block_id from the model's local references, validates
-block_type against the allowed whitelist, and reuses incoming CarryState stitch_ids
-for blocks that continue from the previous page. New stitch_ids for blocks that
-continue to the NEXT page are allocated later by the carry builder (spec §23).
-"""
-
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -37,13 +28,11 @@ def normalize_extraction(
     raw_blocks = list(raw.get("blocks") or [])
     incoming_open = {u.stitch_id for u in carry_state.open_units}
 
-    # Pass 1: local id -> canonical id (by reading order).
     local_to_canonical: Dict[str, str] = {}
     for i, rb in enumerate(raw_blocks):
         local_id = str(rb.get("block_id") or f"b{i + 1}")
         local_to_canonical.setdefault(local_id, ids.block_id(doc, page_no, i + 1))
 
-    # Pass 2: build canonical Blocks.
     blocks: List[Block] = []
     for i, rb in enumerate(raw_blocks):
         canonical = ids.block_id(doc, page_no, i + 1)
@@ -54,7 +43,7 @@ def normalize_extraction(
 
         parent_local = rb.get("parent_block_id")
         parent = local_to_canonical.get(str(parent_local)) if parent_local else None
-        if parent == canonical:  # a block cannot be its own parent
+        if parent == canonical:
             parent = None
 
         model_stitch = rb.get("stitch_id")
@@ -73,7 +62,6 @@ def normalize_extraction(
 
     canonical_by_id = {b.block_id: b for b in blocks}
 
-    # Continuation decisions: remap block ids, drop unknowns.
     decisions: List[BlockContinuation] = []
     for d in (raw.get("continuation") or {}).get("decisions") or []:
         bl = local_to_canonical.get(str(d.get("block_id")))
@@ -92,7 +80,6 @@ def normalize_extraction(
             )
         )
 
-    # Enforce sub-point hierarchy: ensure orphaned (১), (ক), (a) blocks attach to parent rule or open carry unit
     from src.stages.carry_rejection import MAINRULE, SUBPOINT
     from src.stages._common import block_text
 
@@ -129,12 +116,6 @@ def extract(
     regions: Optional[List[Dict[str, Any]]] = None,
     ocr_format: Optional[str] = None,
 ) -> PageExtraction:
-    """
-    `regions` (region mode) is optional structural GUIDANCE: a list of
-    {region_id, description, continuation_context, skills:[skill_id]} the extractor may use
-    to segment better. It is guidance only — the extractor still produces the final blocks
-    and records the actual skills_used per block.
-    """
     fmt = ocr_format or config.OCR_INPUT_FORMAT
     system = render_prompt(
         "extractor",

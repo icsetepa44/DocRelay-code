@@ -1,5 +1,3 @@
-"""SkillRecord (spec §4.3), SkillSelection (spec §4.4), and the extractor-facing view."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -10,11 +8,9 @@ from .common import to_dict
 
 @dataclass
 class SkillRecord:
-    """Canonical representation of a skill. Records are immutable per version (spec §5)."""
-
     skill_id: str
     version: int
-    status: str                      # main | fallback | candidate | deprecated
+    status: str
     description: str
     applicability: List[str] = field(default_factory=list)
     instructions: List[str] = field(default_factory=list)
@@ -38,7 +34,6 @@ class SkillRecord:
         return to_dict(self)
 
     def extractor_view(self) -> Dict[str, Any]:
-        """Operational-only view (no provenance/status) sent to the extractor (spec §4.3)."""
         return {
             "skill_id": self.skill_id,
             "version": self.version,
@@ -46,7 +41,6 @@ class SkillRecord:
         }
 
     def retrieval_text(self) -> str:
-        """Text a retriever indexes: description + applicability (+ provenance reason)."""
         parts = [self.description, *self.applicability]
         reason = (self.provenance or {}).get("reason")
         if reason and self.status == "fallback":
@@ -76,8 +70,6 @@ class SelectedSkill:
 
 @dataclass
 class SkillSelection:
-    """Skills potentially useful on a page (spec §4.4). coverage ∈ {sufficient,partial,insufficient}."""
-
     page_number: int
     skills: List[SelectedSkill] = field(default_factory=list)
     coverage: str = "sufficient"

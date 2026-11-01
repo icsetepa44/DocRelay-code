@@ -1,5 +1,3 @@
-"""general block types + entity-based skills (MPDocBench)."""
-
 import json
 from pathlib import Path
 
@@ -35,18 +33,18 @@ def test_registry_status_comes_from_registry_hermetic(tmp_path, monkeypatch):
                {"skill_id": sid, "version": 1, "status": "main", "description": "d",
                 "applicability": ["a"], "instructions": ["i"], "conflicts_with": [], "provenance": {}})
     monkeypatch.setattr(config, "SKILLS_DIR", skills)
-    reg = SkillRegistry()                                    # fresh instance, bypasses the cached singleton
-    assert {r.skill_id for r in reg.by_status("main")} == {"table"}     # registry status wins over record
+    reg = SkillRegistry()
+    assert {r.skill_id for r in reg.by_status("main")} == {"table"}
     assert {r.skill_id for r in reg.by_status("deprecated")} == {"old"}
     assert reg.get("table").skill_id == "table"
 
 
 def test_real_registry_is_the_general_set():
-    reg = SkillRegistry()                                    # reads the real (updated) skills/
+    reg = SkillRegistry()
     main_ids = {r.skill_id for r in reg.by_status("main")}
     assert main_ids == GENERAL_SKILLS, main_ids
-    assert not (main_ids & LEGAL_ONLY)                       # no legacy skill is 'main'
-    assert reg.get("table").version == 2                     # table preserved + generalized to v2
+    assert not (main_ids & LEGAL_ONLY)
+    assert reg.get("table").version == 2
     for r in reg.by_status("main"):
         assert r.extractor_view()["instructions"], f"{r.skill_id} has no instructions"
 

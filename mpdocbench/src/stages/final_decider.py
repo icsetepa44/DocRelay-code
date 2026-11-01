@@ -1,12 +1,3 @@
-"""
-FinalDecider stage (page corrector) — repairs the draft PageExtraction from the SuperValidator's
-critique and the source page, and returns the complete corrected page.
-
-Same stage as in the TIDE pipeline, except that the legal sub-point enforcer (`_enforce_subpoint_hierarchy`,
-Bangla clause regexes) is deliberately left out: MPDocBench pages are a flat sequence of elements and
-only headings parent headings (see prompts/extractor.md).
-"""
-
 from __future__ import annotations
 
 from typing import Any, Dict, Optional

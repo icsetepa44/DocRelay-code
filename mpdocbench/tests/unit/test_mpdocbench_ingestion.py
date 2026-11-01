@@ -1,8 +1,3 @@
-"""MPDocBench ingestion — read layout + page image from the OCR dir, no PDFs.
-
-Hermetic tests build a synthetic mini-OCR doc in tmp and monkeypatch the OCR/data paths.
-"""
-
 import json
 from pathlib import Path
 
@@ -51,13 +46,13 @@ def test_ensure_page_assets_uses_ocr_image_and_writes_no_pagepng(tmp_path, monke
     rec = chandra_adapter.read_page_records(doc)[0]
     pd = ds.ensure_page_assets(rec)
     assert isinstance(pd, PageData)
-    assert pd.layout["chunks"]                                    # layout carried onto PageData
-    assert pd.page_image == rec["page_image_src"]                 # points straight at the OCR image
+    assert pd.layout["chunks"]
+    assert pd.page_image == rec["page_image_src"]
     assert Path(pd.page_image).exists()
     page_dir = config.DOCUMENTS_DIR / doc / "pages" / "0000"
     assert (page_dir / "page_data.json").exists()
     assert (page_dir / "chandra.md").exists()
-    assert not (page_dir / "page.png").exists()                   # no PDF render, no copy
+    assert not (page_dir / "page.png").exists()
 
 
 def test_ensure_page_assets_missing_image_raises(tmp_path, monkeypatch):
@@ -72,7 +67,4 @@ def test_pagedata_layout_roundtrips():
     pd = PageData(document_id="d", page_number=0, page_image="x.png", markdown="m", html="h",
                   layout={"page_box": [0, 0, 1, 1], "chunks": [{"label": "Text"}]})
     assert PageData.from_dict(pd.to_dict()).layout == pd.layout
-    # default is an empty dict when absent (backward-compatible)
     assert PageData.from_dict({"document_id": "d", "page_number": 0}).layout == {}
-
-

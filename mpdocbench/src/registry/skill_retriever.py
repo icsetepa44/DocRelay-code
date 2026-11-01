@@ -1,13 +1,3 @@
-"""
-Skill Retriever (spec §8.2) — a swappable similarity index over each skill's
-description + applicability. Operational `instructions` are intentionally NOT indexed.
-
-The scorer is config-selected (skill_retrieval.method): "keyword" (stdlib TF-cosine) or
-"embedding" (sentence-transformers); run.py currently sets "embedding". With main_top_k=3
-and 6 main skills, retrieval keeps only the 3 highest-scoring candidates per query, and the
-Skill Router (LLM) makes the final selection from those.
-"""
-
 from __future__ import annotations
 
 import math
@@ -30,7 +20,6 @@ def _tokens(text: str) -> List[str]:
 def _score(query_tokens: Counter, doc_tokens: Counter) -> float:
     if not query_tokens or not doc_tokens:
         return 0.0
-    # cosine similarity over raw term frequencies
     common = set(query_tokens) & set(doc_tokens)
     dot = sum(query_tokens[t] * doc_tokens[t] for t in common)
     qn = math.sqrt(sum(v * v for v in query_tokens.values()))
@@ -46,24 +35,11 @@ def retrieve_skills(
     pin_skill_ids: Optional[List[str]] = None,
     weight_skill_ids: Optional[Dict[str, float]] = None,
 ) -> List[SkillRecord]:
-    """Return the top_k most similar skills, plus any pinned skills.
-
-    ``pin_skill_ids`` force-includes named skills (appended after the top_k when not already
-    present) so a caller can guarantee availability regardless of the similarity score — used
-    to keep the ``table`` skill on offer for a continuing table (T7). Pins are looked up from
-    the candidate set, so a pin that names no existing skill is silently ignored.
-
-    ``weight_skill_ids`` applies an ADDITIVE score boost to named skills BEFORE the top_k
-    cut, so a per-domain profile can bias (not force) a skill up the ranking. Empty -> no-op.
-
-    The Skill Router still makes the final selection from whatever is returned.
-    """
     registry = registry or get_registry()
     candidates: List[SkillRecord] = []
     for status in statuses:
         candidates.extend(registry.by_status(status))
 
-    # de-dup while preserving order
     seen = set()
     unique: List[SkillRecord] = []
     for rec in candidates:
@@ -72,18 +48,15 @@ def retrieve_skills(
         seen.add(rec.skill_id)
         unique.append(rec)
 
-    # Scorer is selected live from config so a runner can override it at runtime.
     if config.RETRIEVAL_SCORER == "embedding":
         scores = embedding_scorer.score(query, [rec.retrieval_text() for rec in unique])
         scored = list(zip(unique, scores))
     else:
         q = Counter(_tokens(query))
         scored = [(rec, _score(q, Counter(_tokens(rec.retrieval_text())))) for rec in unique]
-    # additive per-domain boost before the cut (empty -> no change).
     if weight_skill_ids:
         scored = [(rec, score + float(weight_skill_ids.get(rec.skill_id, 0.0)))
                   for rec, score in scored]
-    # stable sort: score desc, then skill_id for determinism
     scored.sort(key=lambda x: (-x[1], x[0].skill_id))
     result = [rec for rec, _ in scored[:top_k]]
 

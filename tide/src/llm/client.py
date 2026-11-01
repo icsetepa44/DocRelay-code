@@ -1,20 +1,3 @@
-"""
-LLM client — ported from old_pipeline/llm_client.py.
-
-Backends: openrouter (OpenAI-compatible, vision), ollama, hf. v1 uses openrouter.
-The OpenRouter path sends the page image as a base64 data-URL `image_url` part and
-requests `response_format={"type":"json_object"}`.
-
-Enhancements over the original:
-  - per-request timeout,
-  - bounded retry with linear backoff on transient errors,
-  - one-time drop of response_format if the model rejects it (kept from the original),
-  - configurable image mime (png / jpeg).
-
-`chat_completion` returns raw text; parsing/validation is the caller's job
-(see structured_output.py).
-"""
-
 from __future__ import annotations
 
 import base64
@@ -51,17 +34,13 @@ class LLMRequestConfig:
     num_ctx: Optional[int] = None
     max_new_tokens: int = 4096
     think: bool = False
-    response_format: str = "json"     # "json" -> request json_object where supported
+    response_format: str = "json"
     timeout: float = 120.0
     max_retries: int = 3
     retry_backoff: float = 2.0
-    image_format: str = "png"         # "png" | "jpeg"
-    provider: Optional[Dict[str, Any]] = None  # OpenRouter extra_body.provider routing
+    image_format: str = "png"
+    provider: Optional[Dict[str, Any]] = None
 
-
-# ============================================================
-# IMAGE HELPERS
-# ============================================================
 
 def _pil_to_base64(image: Any, image_format: str = "png") -> str:
     fmt = "JPEG" if str(image_format).lower() in ("jpg", "jpeg") else "PNG"
@@ -94,10 +73,6 @@ def _normalize_pil_images(images: Optional[List[Any]]) -> List[Any]:
     return normalized
 
 
-# ============================================================
-# PUBLIC ENTRY POINT
-# ============================================================
-
 def chat_completion(
     *,
     system_prompt: str,
@@ -105,7 +80,6 @@ def chat_completion(
     config: LLMRequestConfig,
     images: Optional[List[Any]] = None,
 ) -> str:
-    """Send system+user (+ optional images) to the selected backend; return text."""
     backend = str(config.backend).strip().lower()
 
     if backend == "ollama":
@@ -126,10 +100,6 @@ def chat_completion(
     )
 
 
-# ============================================================
-# OPENROUTER BACKEND
-# ============================================================
-
 def _looks_like_format_issue(exc: Exception) -> bool:
     msg = str(exc).lower()
     return ("response_format" in msg) or ("json_object" in msg) or ("json mode" in msg)
@@ -145,12 +115,6 @@ def _is_transient(exc: Exception) -> bool:
 
 
 def _retry_delay(exc: Exception, attempt: int, base: float, cap: float = 30.0) -> float:
-    """Seconds to wait before retry `attempt` (1-indexed).
-
-    Honours the server's Retry-After header on rate limits when present; otherwise uses
-    exponential backoff with jitter (base*2^(attempt-1), capped) so concurrent workers
-    don't retry in lockstep and hammer the provider.
-    """
     resp = getattr(exc, "response", None)
     if resp is not None:
         try:
@@ -183,7 +147,6 @@ def _chat_openrouter(
             "Add it to a .env file in the project root or the environment."
         )
 
-    # max_retries=0 so our loop governs retries (avoid double backoff).
     client = OpenAI(base_url=OPENROUTER_BASE_URL, api_key=api_key,
                     timeout=config.timeout, max_retries=0)
 
@@ -210,7 +173,6 @@ def _chat_openrouter(
     if use_json:
         request_kwargs["response_format"] = {"type": "json_object"}
 
-    # OpenRouter provider routing (e.g. ignore Alibaba's Bangla input-filter).
     if config.provider:
         request_kwargs["extra_body"] = {"provider": config.provider}
 
@@ -222,9 +184,8 @@ def _chat_openrouter(
         try:
             response = client.chat.completions.create(**request_kwargs)
             return response.choices[0].message.content or ""
-        except Exception as exc:  # noqa: BLE001 (surface as LLMError below)
+        except Exception as exc:
             last_exc = exc
-            # One-time: some models reject response_format -> drop it and retry immediately.
             if use_json and not dropped_format and request_kwargs.get("response_format") \
                     and _looks_like_format_issue(exc):
                 request_kwargs.pop("response_format", None)
@@ -239,10 +200,6 @@ def _chat_openrouter(
                 f"retr{'y' if attempt == 1 else 'ies'}: {exc}"
             ) from last_exc
 
-
-# ============================================================
-# TOGETHER AI BACKEND
-# ============================================================
 
 def _chat_together(
     *,
@@ -265,7 +222,6 @@ def _chat_together(
             "Add it to a .env file in the project root or the environment."
         )
 
-    # max_retries=0 so our loop governs retries.
     client = OpenAI(base_url=TOGETHER_BASE_URL, api_key=api_key,
                     timeout=config.timeout, max_retries=0)
 
@@ -300,7 +256,7 @@ def _chat_together(
         try:
             response = client.chat.completions.create(**request_kwargs)
             return response.choices[0].message.content or ""
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             last_exc = exc
             if use_json and not dropped_format and request_kwargs.get("response_format") \
                     and _looks_like_format_issue(exc):
@@ -316,10 +272,6 @@ def _chat_together(
                 f"retr{'y' if attempt == 1 else 'ies'}: {exc}"
             ) from last_exc
 
-
-# ============================================================
-# OLLAMA BACKEND (optional; unused in v1)
-# ============================================================
 
 def _chat_ollama(*, system_prompt, user_prompt, config, images=None):
     try:
@@ -355,10 +307,6 @@ def _chat_ollama(*, system_prompt, user_prompt, config, images=None):
     )
     return response["message"]["content"]
 
-
-# ============================================================
-# HUGGINGFACE BACKEND (optional; unused in v1)
-# ============================================================
 
 @dataclass
 class _HFBundle:
@@ -399,7 +347,7 @@ def _load_hf_bundle(model_name: str, vision: bool = False) -> _HFBundle:
             try:
                 model = _from_pretrained_with_dtype(model_cls, model_name, token)
                 return _HFBundle(processor=processor, model=model)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 last_error = e
         raise RuntimeError(f"Could not load HF vision model {model_name}. Last error: {last_error}")
 

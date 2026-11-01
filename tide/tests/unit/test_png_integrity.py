@@ -14,11 +14,10 @@ def test_complete_png_is_detected_valid(tmp_path):
 
 
 def test_torn_write_is_detected_incomplete(tmp_path):
-    """A save interrupted mid-write leaves the file present but missing its IEND chunk."""
     p = tmp_path / "page.png"
     _write_png(p)
     data = p.read_bytes()
-    p.write_bytes(data[: len(data) // 2])  # simulate a torn write
+    p.write_bytes(data[: len(data) // 2])
     assert _png_complete(p) is False
 
 

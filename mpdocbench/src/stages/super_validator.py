@@ -1,12 +1,3 @@
-"""
-SuperValidator stage (page verifier) — critiques the draft PageExtraction for missing content,
-segmentation, block types, heading hierarchy, reading order and page-boundary continuation.
-
-Same stage as in the TIDE pipeline. MPDocBench additions: the domain profile and the allowed
-block types are rendered into the prompt, and an optional deterministic `draft_coverage` hint (from the
-page under-production detector) is sent so a dropped page is easy to spot.
-"""
-
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
@@ -19,9 +10,6 @@ from src.llm.prompt_loader import render_prompt
 from src.llm.structured_output import request_json
 from src.stages._common import format_guidance, page_text_payload, payload_json
 
-# Issue types that send the page to the FinalDecider. `continuation_ambiguity` and `noise_as_content`
-# are report-only (continuation is settled through `continuation_review`). `wrong_reading_order` is an
-# MPDocBench addition (reading order was the weakest paper-comparable metric during development).
 CORRECTION_TRIGGERS = frozenset({
     "missing_text", "wrong_hierarchy", "split_clause", "merged_clause",
     "wrong_block_type", "wrong_reading_order",
@@ -31,12 +19,10 @@ NEXT_PAGE_SNIPPET_CHARS = 1200
 
 
 def next_page_snippet(next_page: Optional[PageData]) -> Optional[str]:
-    """The opening of the next page's OCR text (continuation evidence only), as in the TIDE pipeline."""
     return next_page.markdown[:NEXT_PAGE_SNIPPET_CHARS] if next_page and next_page.markdown else None
 
 
 def coverage_hint(underproduction_record: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Compact deterministic coverage numbers for the critic, from the under-production record."""
     if not underproduction_record or "coverage" not in underproduction_record:
         return None
     return {
@@ -92,7 +78,6 @@ def validate(
 
 
 def needs_correction(super_validation: Optional[SuperValidationResult], extraction: PageExtraction) -> bool:
-    """FinalDecider gate: a correction-triggering issue, or an empty draft (needs a successful critique)."""
     if super_validation is None:
         return False
     if any(i.issue_type in CORRECTION_TRIGGERS for i in super_validation.issues):

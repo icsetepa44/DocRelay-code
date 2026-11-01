@@ -19,15 +19,13 @@ def test_trailing_comma_recovered():
 
 
 def test_truncated_object_recovers_completed_blocks():
-    # Model was cut off mid-second-block (hit the token cap). We must recover block 1.
     raw = '{"page_number": 3, "blocks": [{"block_id": "b1", "content": {"text": "hi"}}, {"block_id": "b2", "content": {"text": "wor'
     obj = extract_json_object(raw)
     assert obj["blocks"][0]["block_id"] == "b1"
-    assert len(obj["blocks"]) == 1  # the incomplete b2 is dropped, not fabricated
+    assert len(obj["blocks"]) == 1
 
 
 def test_salvage_never_alters_string_content():
-    # A comma+brace INSIDE a string must not be treated as a trailing comma.
     raw = '{"page_number": 4, "blocks": [{"content": {"text": "a, }"}}]}'
     obj = extract_json_object(raw)
     assert obj["blocks"][0]["content"]["text"] == "a, }"
@@ -39,5 +37,4 @@ def test_unrecoverable_raises():
 
 
 def test_salvage_returns_none_on_flat_truncation_without_container():
-    # A flat object truncated mid-value with no completed nested container cannot be safely salvaged.
     assert _salvage_json('{"a": "b') is None

@@ -1,11 +1,3 @@
-"""
-Validator (spec §8.5, §11). Independently checks whether a PageExtraction faithfully
-represents the source page. In v1 this is REPORT-ONLY, so it is parsed LENIENTLY:
-unknown issue types are coerced to "other" rather than failing, and a missing/odd
-status is inferred from whether issues were reported. The orchestrator persists and
-logs the result but never branches into repair (deferred Phase B).
-"""
-
 from __future__ import annotations
 
 from typing import Any, Optional
@@ -57,7 +49,7 @@ def validate(
         "Validate this PageExtraction against the source page. Report problems only.\n\n"
         + payload_json(payload)
     )
-    with usage.tags(role="validator", repair=0):  # cost/time ledger
+    with usage.tags(role="validator", repair=0):
         raw = chat_completion(
             system_prompt=system,
             user_prompt=user,

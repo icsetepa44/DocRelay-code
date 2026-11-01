@@ -1,8 +1,3 @@
-"""
-Run store — creates runs/run_YYYYMMDD_HHMMSS/<doc>/ and persists per-page + final
-artifacts (spec §6 layout).
-"""
-
 from __future__ import annotations
 
 import json

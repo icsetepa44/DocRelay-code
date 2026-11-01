@@ -1,12 +1,3 @@
-"""
-Block — the canonical extracted page-level block (spec §4.6).
-
-Every block always contains: block_id, block_type, parent_block_id, stitch_id,
-content, skills_used. `content` shape varies by block_type (text/heading/table/…),
-so it is kept as a free-form dict here; block-type-specific validation lives in the
-JSON schemas and the extractor normalizer.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field

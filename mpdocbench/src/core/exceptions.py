@@ -1,27 +1,25 @@
-"""Pipeline exceptions."""
-
 from __future__ import annotations
 
 
 class PipelineError(Exception):
-    """Base class for all pipeline errors."""
+    pass
 
 
 class LLMError(PipelineError):
-    """An LLM call failed after retries."""
+    pass
 
 
 class StructuredOutputError(PipelineError):
-    """Model output could not be parsed / validated into the expected contract."""
+    pass
 
 
 class UnresolvedContinuationError(PipelineError):
-    """Continuation remained 'uncertain' and unresolved_policy = stop (spec §22)."""
+    pass
 
 
 class UnresolvedExtractionError(PipelineError):
-    """A page could not be resolved (used by the deferred Phase B failure path)."""
+    pass
 
 
 class SkillRegistryError(PipelineError):
-    """Skill registry / record loading problem."""
+    pass

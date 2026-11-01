@@ -21,7 +21,7 @@ def test_normalize_ids_parents_types_and_stitch_reuse():
         ],
         "continuation": {"page_number": 1, "decisions": [
             {"block_id": "sub", "decision": "continues", "evidence": ["e"]},
-            {"block_id": "ghost", "decision": "continues", "evidence": []},  # unknown -> dropped
+            {"block_id": "ghost", "decision": "continues", "evidence": []},
         ]},
     }
     page = PageData("doc", 1, "x.png", "md", "html")
@@ -29,9 +29,8 @@ def test_normalize_ids_parents_types_and_stitch_reuse():
 
     assert [b.block_id for b in pe.blocks] == [
         "doc:p0001:b0001", "doc:p0001:b0002", "doc:p0001:b0003"]
-    assert pe.blocks[2].parent_block_id == "doc:p0001:b0002"   # local parent remapped
-    assert pe.blocks[2].block_type == "text_block"             # invalid type coerced
-    assert pe.blocks[1].stitch_id == "doc:s000009"             # reused from carry
-    assert pe.blocks[2].stitch_id is None                      # invented stitch dropped
-    # only the known-block decision survives, remapped to canonical id
+    assert pe.blocks[2].parent_block_id == "doc:p0001:b0002"
+    assert pe.blocks[2].block_type == "text_block"
+    assert pe.blocks[1].stitch_id == "doc:s000009"
+    assert pe.blocks[2].stitch_id is None
     assert [d.block_id for d in pe.continuation.decisions] == ["doc:p0001:b0003"]

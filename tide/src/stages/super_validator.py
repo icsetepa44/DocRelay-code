@@ -1,8 +1,3 @@
-"""
-SuperValidator stage — evaluates draft PageExtraction for structural accuracy,
-content completeness, hierarchy, and cross-page continuation.
-"""
-
 from __future__ import annotations
 
 from typing import Any, Dict, Optional

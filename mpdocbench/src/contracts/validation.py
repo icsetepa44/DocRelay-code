@@ -1,5 +1,3 @@
-"""PageValidation (spec §4.9) and FinalValidation (spec §4.16)."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -29,7 +27,7 @@ class ValidationIssue:
 @dataclass
 class PageValidation:
     page_number: int
-    status: str = "pass"             # pass | fail
+    status: str = "pass"
     issues: List[ValidationIssue] = field(default_factory=list)
 
     @staticmethod

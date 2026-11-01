@@ -1,9 +1,3 @@
-"""
-Continuation Judge (spec §8.6, §12). Invoked ONLY for blocks the extractor marked
-'uncertain'. Decides continues / ends / uncertain for each, using both page images
-and both pages' text. Returns a ContinuationDecision covering the requested blocks.
-"""
-
 from __future__ import annotations
 
 from typing import Any, List, Optional

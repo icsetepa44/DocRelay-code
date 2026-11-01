@@ -1,49 +1,3 @@
-"""
-MPDocBench evaluation adapter (fork).
-
-Maps our ``FinalDocument.units`` onto MPDocBench's element/metric shape and scores them against
-the MPDocBench gold, **reusing the benchmark's own leaf scorers** (``TEDS``, ``HeadTEDS``) and its
-text / formula / table normalizers so results are comparable to their leaderboard. Their aggregation
-layer (``metrics/cal_metric.py``) imports pandas/evaluate/CDM at module top and is only trivial
-arithmetic, so we reimplement the aggregation to their *exact* formulas and reuse only the
-non-trivial leaf algorithms.
-
-Import strategy (verified): ``metrics/`` has a poisoned ``__init__`` (pandas/evaluate/CDM), but
-``metrics/table_metric.py`` and ``metrics/head_metric.py`` use only absolute imports, so we file-load
-them standalone (bypassing the package init). ``utils/`` has no ``__init__`` (namespace package), so
-``utils.data_preprocess`` / ``utils.merge_tables`` / ``utils.relation_utils`` import cleanly. Required
-pip deps beyond the fork's base: ``Levenshtein apted pylatexenc``.
-
-Metrics (per doc; averaged per domain / overall):
-  - text            whole-document concatenated-string edit distance (1 - normalized Levenshtein): a
-                    segmentation-blind CONTENT-FIDELITY number (does the doc contain the right words),
-                    NOT the paper's per-block ``edit_whole`` -> treat as our own, not directly comparable
-  - text_diag       OUR non-comparable diagnostic: segmentation precision/recall/F1 of the pred<->gold
-                    text-block matching (this is where under-segmentation / over-production show up, since
-                    the whole-string ``text`` metric is blind to them)
-  - equation        PAPER-FAITHFUL CDM (Character Detection Matching): reuses the paper's OWN formula
-                    matcher (``utils.match.match_gt2pred_simple``) + CDM scorer (``metrics.cdm_metric.CDM``)
-                    via ``src.eval.cdm_formula``, micro-averaged over all pairs. Carries ``method``; falls
-                    back to the edit diagnostic (honestly labelled) when the CDM toolchain is unavailable.
-  - equation_diag   OUR toolchain-free diagnostic: per-equation latex edit distance (matched by order) —
-                    the pre-CDM metric, kept as a sanity anchor / fallback (not paper-comparable)
-  - table           TEDS / TEDS-structure (matched by reading order)
-  - heads           HeadTEDS on the heading tree
-  - figures         per-page IoU@0.5 F1 (pred boxes from Chandra layout)
-  - reading_order   paper-faithful matched-block order edit distance (``get_order_paired``): per page,
-                    Levenshtein over the sequence of matched gold indices (both sides matched set); blocks
-                    matched with the official ``utils.match_quick.match_gt2pred_quick`` (configs/end2end.yaml)
-  - merged_text/table   cross-page truncation reconstruction (our headline capability)
-  - relation        optional table/text truncation-pair F1 (their relation_utils)
-
-Base-agnostic by design: page *rank* alignment (not raw page_id) for text_diag/reading-order block
-matching and for figures, and order-rank matching for tables/equations, so the fork's OCR page numbering
-need not match gold ``page_id``. reading_order is micro-averaged at the run level (Sum edits / Sum uppers,
-matching the paper's ``edit_whole``); text (whole-string) and all other metrics are macro-averaged over docs.
-
-No CLI: driven by ``run.py`` (RUN_EVAL) or ``python -m src.eval.mpdocbench``.
-"""
-
 from __future__ import annotations
 
 import importlib
@@ -54,23 +8,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-_DU = Path(__file__).resolve().parents[2]  # mpdocbench/
+_DU = Path(__file__).resolve().parents[2]
 if str(_DU) not in sys.path:
     sys.path.insert(0, str(_DU))
 
-from src.core import config  # noqa: E402
-from src.ocr.chandra_adapter import ocr_dir_for  # noqa: E402  (same doc-dir resolver as the pipeline)
-from src.eval import adapt  # noqa: E402  (reuse _unit_text / _iter_table_contents / _merge_table_contents / _top_ancestor)
-from src.eval import cdm_formula  # noqa: E402  (paper-faithful Formula/CDM adapter; loaders lazy — no toolchain at import)
-from src.eval.table_structure import to_grid, _assign  # noqa: E402  (_assign: guarded Hungarian/greedy)
+from src.core import config
+from src.ocr.chandra_adapter import ocr_dir_for
+from src.eval import adapt
+from src.eval import cdm_formula
+from src.eval.table_structure import to_grid, _assign
 
-# ============================================================
-# CATEGORY MAPS (our block types <-> MPDocBench gold category_type)
-# ------------------------------------------------------------
-# Gold quirks confirmed against real data: equations are ``equation_isolated``;
-# captions split into ``figure_caption`` / ``table_caption``; furniture is ``footer`` / ``page_number``
-# / headers; ``poly`` is 8 floats; ``order`` is global; ``page_id`` is 1-based.
-# ============================================================
 
 BLOCK_TO_CATEGORY: Dict[str, str] = {
     "text_block": "text_block",
@@ -85,41 +32,21 @@ BLOCK_TO_CATEGORY: Dict[str, str] = {
 FURNITURE_BLOCK_TYPES = {"header_footer_page_number"}
 DROP_BLOCK_TYPES = {"noise_or_separator"}
 
-# Chandra layout chunk labels that denote a figure (confirmed label universe).
 FIGURE_LABELS = {"Image", "Figure", "Diagram"}
 
-# Gold categories that carry comparable prose for the text-edit metric (exclude tables/equations/
-# figures which have their own metrics, and furniture).
 GOLD_TEXT_CATEGORIES = {"text_block", "title", "figure_caption", "table_caption", "caption",
                         "list", "footnote"}
-# Our pred block types that feed the text stream (mirror of GOLD_TEXT_CATEGORIES on our side).
 PRED_TEXT_BLOCK_TYPES = {"text_block", "heading", "caption", "list", "code"}
 
-# OUR table diagnostic only (NOT the paper's metric): an assigned (gold, pred) table pair counts as a
-# "true match" iff its TEDS is at least this — used by ``score_table_diag`` for precision/recall/F1 that
-# expose over-prediction and misclassification. The paper-faithful headline ``table``
-# metric has NO threshold (``match_tables`` assigns best-match, then scores mean TEDS).
 TABLE_DIAG_MATCH_TEDS = 0.5
 
-# OUR text diagnostic only (NOT the paper's metric): a matched (gold, pred) text-block pair counts as a
-# "true match" iff its normalised edit distance is at most this — used by ``score_text_diag`` for
-# segmentation precision/recall/F1 (over-production lowers precision; under-segmentation lowers recall).
 TEXT_DIAG_MATCH_EDIT = 0.5
 
-
-# ============================================================
-# LEAF-SCORER SHIM (reuse the benchmark's own scorers/normalizers)
-# ============================================================
 
 _LEAF: Dict[str, Any] = {}
 
 
 def _load_leaf() -> Dict[str, Any]:
-    """Load and cache the benchmark's leaf scorers + normalizers.
-
-    Raises a single clear ``ImportError`` naming the missing pip package, so a machine without the
-    metric deps fails loudly here (not at ``import mpdocbench``).
-    """
     if _LEAF:
         return _LEAF
     repo = config.MPDOCBENCH_ROOT / "repo" / "MPDocBench"
@@ -135,8 +62,8 @@ def _load_leaf() -> Dict[str, Any]:
             raise ImportError(f"cannot build import spec for {path}")
         mod = importlib.util.module_from_spec(spec)
         try:
-            spec.loader.exec_module(mod)  # type: ignore[union-attr]
-        except ImportError as exc:  # a leaf dep (Levenshtein/apted/lxml) is missing
+            spec.loader.exec_module(mod)
+        except ImportError as exc:
             raise ImportError(
                 f"MPDocBench metric dependency missing while loading {rel}: {exc}. "
                 f"Install with:  pip install Levenshtein apted pylatexenc"
@@ -149,10 +76,8 @@ def _load_leaf() -> Dict[str, Any]:
         dp = importlib.import_module("utils.data_preprocess")
         mt = importlib.import_module("utils.merge_tables")
         ru = importlib.import_module("utils.relation_utils")
-        # text-block matcher: the official evaluation's quick_match (configs/end2end.yaml), which lets one pred
-        # block cover several consecutive gold blocks (and the reverse)
         mq = importlib.import_module("utils.match_quick")
-        import Levenshtein as lev  # noqa: N813
+        import Levenshtein as lev
     except ImportError as exc:
         raise ImportError(
             f"MPDocBench metric dependency missing: {exc}. "
@@ -160,7 +85,6 @@ def _load_leaf() -> Dict[str, Any]:
         ) from exc
 
     def _match_quick(gt_items, pred_items, line_type, img_name):
-        # quick_match returns the record list alone; keep the (records, extra) shape of the simple matcher
         return mq.match_gt2pred_quick(gt_items, pred_items, line_type, img_name), None
 
     _LEAF.update(
@@ -203,7 +127,6 @@ def _norm_formula(latex: str) -> str:
 
 
 def _edit(a: str, b: str) -> Tuple[int, int]:
-    """(levenshtein distance, upper_len=max(len)). (0,0) when both empty."""
     L = _load_leaf()
     upper = max(len(a), len(b))
     if upper == 0:
@@ -216,12 +139,7 @@ def _edit_score(a: str, b: str) -> float:
     return 1.0 if upper == 0 else 1.0 - dist / upper
 
 
-# ============================================================
-# HELPERS
-# ============================================================
-
 def _parse_page_seq(block_id: str) -> Tuple[int, int]:
-    """``doc:pNNNN:bNNNN`` -> (page, seq). (0, 0) on any parse failure."""
     try:
         parts = block_id.split(":")
         return int(parts[-2][1:]), int(parts[-1][1:])
@@ -230,8 +148,6 @@ def _parse_page_seq(block_id: str) -> Tuple[int, int]:
 
 
 def _grid_to_html(grid: List[List[str]]) -> str:
-    """A rectangular string grid -> minimal HTML table (all <td>; the benchmark's normalizer
-    unwraps <thead>/<th> anyway, so header vs body is irrelevant to TEDS)."""
     if not grid:
         return ""
     rows = []
@@ -242,7 +158,6 @@ def _grid_to_html(grid: List[List[str]]) -> str:
 
 
 def _heading_level_text(unit: Dict[str, Any]) -> Tuple[int, str]:
-    """(level>=1, text) for a heading unit (first fragment if stitched)."""
     content = unit.get("content")
     if isinstance(content, list):
         content = (content[0].get("content") if content else {}) or {}
@@ -257,8 +172,6 @@ def _heading_level_text(unit: Dict[str, Any]) -> Tuple[int, str]:
 
 
 def _pred_table_html(unit: Dict[str, Any]) -> str:
-    """HTML for a pred table unit: explicit ``html`` fallback wins, else render {headers,rows}
-    (or markdown) via the shared ``to_grid``."""
     contents = list(adapt._iter_table_contents(unit))
     if not contents:
         return ""
@@ -273,10 +186,6 @@ def _pred_table_html(unit: Dict[str, Any]) -> str:
     return str(entry.get("markdown") or "")
 
 
-# ============================================================
-# PRED SIDE (our FinalDocument -> pred elements)
-# ============================================================
-
 @dataclass
 class PredElement:
     unit_id: str
@@ -287,20 +196,17 @@ class PredElement:
     text: str = ""
     html: str = ""
     latex: str = ""
-    table_text: str = ""  # flattened cell text of a table unit, used if it is demoted to text
+    table_text: str = ""
     furniture: bool = False
-    merged: bool = False  # spans >1 source page (our cross-page stitch)
+    merged: bool = False
 
 
 @dataclass
 class PredDoc:
     elements: List[PredElement] = field(default_factory=list)
-    head_md: List[str] = field(default_factory=list)         # ["# Title", "## Sub", ...]
-    figures: List[Dict[str, Any]] = field(default_factory=list)  # [{page_id, page_rank, bbox_norm}]
+    head_md: List[str] = field(default_factory=list)
+    figures: List[Dict[str, Any]] = field(default_factory=list)
     n_pages: int = 0
-    # Full physical-page universe (sorted), so text-block ranking aligns page-for-page with gold even
-    # when a page carries no text on this side (cover / silently text-dropped page). Empty -> the text
-    # matcher falls back to the pages that actually bear text (legacy behavior; see _group_text_by_rank).
     page_universe: List[int] = field(default_factory=list)
 
 
@@ -325,7 +231,7 @@ def build_pred_doc(fd: Dict[str, Any], doc: str) -> PredDoc:
         )
         if bt == "table":
             el.html = _pred_table_html(u)
-            el.table_text = adapt._unit_text(u)  # kept so apply_table_text_redirect can move it to text
+            el.table_text = adapt._unit_text(u)
         elif bt == "equation":
             el.latex = adapt._unit_text(u)
         else:
@@ -342,20 +248,13 @@ def build_pred_doc(fd: Dict[str, Any], doc: str) -> PredDoc:
             head_md.append("#" * level + " " + text)
 
     figures = _pred_figures(doc)
-    # Page universe = every page the units actually touch (furniture included; only DROP_BLOCK_TYPES are
-    # skipped). match_text unions this with gold's universe on a shared physical frame, so a whole-page
-    # drop is covered by gold's side and an interior page empty on BOTH sides simply never appears.
     page_universe = sorted({e.page for e in elements})
     return PredDoc(elements=elements, head_md=head_md, figures=figures,
                    n_pages=len(page_universe), page_universe=page_universe)
 
 
 def _pred_figures(doc: str) -> List[Dict[str, Any]]:
-    """Figure boxes from the doc's Chandra layout jsons, normalized to 0-1000 per page_box.
-
-    Returns [{page_id, page_rank, bbox_norm:[x1,y1,x2,y2]}]. ``page_rank`` is the 0-based rank of the
-    page among the doc's sorted layout page_nums (base-agnostic vs gold page_id)."""
-    layout_dir = ocr_dir_for(doc) / "layout"  # flat or category-nested OCR root (pipeline.yaml inputs.ocr_root)
+    layout_dir = ocr_dir_for(doc) / "layout"
     if not layout_dir.is_dir():
         return []
     per_page: List[Tuple[int, List[Dict[str, Any]]]] = []
@@ -389,21 +288,16 @@ def _pred_figures(doc: str) -> List[Dict[str, Any]]:
     return out
 
 
-# ============================================================
-# GOLD SIDE (MPDocBench gold entry -> gold elements)
-# ============================================================
-
 @dataclass
 class GoldDoc:
-    text_elems: List[Dict[str, Any]] = field(default_factory=list)   # {page_id, order, category, text}
-    tables: List[Dict[str, Any]] = field(default_factory=list)       # {page_id, order, html, is_merged, cross_pages}
-    equations: List[Dict[str, Any]] = field(default_factory=list)    # {page_id, order, latex}
-    figures: List[Dict[str, Any]] = field(default_factory=list)      # {page_id, page_rank, bbox_norm}
-    head_input: Any = None                                           # [parent_son_list, head_nodes]
+    text_elems: List[Dict[str, Any]] = field(default_factory=list)
+    tables: List[Dict[str, Any]] = field(default_factory=list)
+    equations: List[Dict[str, Any]] = field(default_factory=list)
+    figures: List[Dict[str, Any]] = field(default_factory=list)
+    head_input: Any = None
     n_titles: int = 0
     merged_text: List[Dict[str, Any]] = field(default_factory=list)
     merged_tables: List[Dict[str, Any]] = field(default_factory=list)
-    # Full physical-page universe (sorted distinct page_id over ALL layout dets) — see PredDoc.page_universe.
     page_universe: List[int] = field(default_factory=list)
 
 
@@ -411,7 +305,6 @@ _GOLD_INDEX: Dict[str, Dict[str, Any]] = {}
 
 
 def load_gold_index() -> Dict[str, Dict[str, Any]]:
-    """{image_path.stem: gold_entry} over the whole MPDocBench gold (cached)."""
     if _GOLD_INDEX:
         return _GOLD_INDEX
     data = json.loads(config.MPDOCBENCH_GOLD.read_text(encoding="utf-8"))
@@ -433,11 +326,6 @@ def _remove_consecutive_dupes(arr: List[Any]) -> List[Any]:
 
 
 def _merge_truncated(entry: Dict[str, Any]):
-    """Mirror of End2EndDataset.get_page_elements: returns (per_category dict, merged_records).
-
-    Cross-page/truncated fragments are grouped (from extra.relation truncated), sorted by ``order``,
-    and merged (tables via merged_html/merge_tables, text via concatenation), tagged with is_merged
-    and *_merge_cross_pages. Non-truncated items pass through by category."""
     L = _load_leaf()
     relations = (entry.get("extra") or {}).get("relation") or []
     dets = entry.get("layout_dets") or []
@@ -498,8 +386,6 @@ def _merge_truncated(entry: Dict[str, Any]):
 
 
 def _document_heads(entry: Dict[str, Any]):
-    """Mirror of End2EndDataset.get_document_heads: (parent_son_list, head_nodes) restricted to
-    title nodes; head_nodes items already carry 'text' and 'anno_id' for HeadTEDS."""
     dets = entry.get("layout_dets") or []
     head_nodes = {it.get("anno_id"): it for it in dets if it.get("category_type") == "title"}
     parent_son = []
@@ -513,8 +399,6 @@ def _document_heads(entry: Dict[str, Any]):
 
 
 def _gold_figures(entry: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Gold figure boxes normalized to 0-1000 (poly[0,1,4,5] / per-page width,height); page_rank is
-    the 0-based rank among the doc's sorted distinct page_ids (base-agnostic)."""
     pi = entry.get("page_info") or {}
     widths, heights = pi.get("width") or [], pi.get("height") or []
     all_pages = sorted({it.get("page_id") for it in entry.get("layout_dets") or []
@@ -571,24 +455,13 @@ def build_gold_doc(entry: Dict[str, Any]) -> GoldDoc:
 
     g.merged_tables = [m for m in merged if m.get("is_merged") == "table"]
     g.merged_text = [m for m in merged if m.get("is_merged") == "text_block"]
-    # Full page universe = every page that carries ANY det (text/table/figure/furniture), so text-block
-    # ranking aligns page-for-page with pred even on pages that bear no comparable text.
     g.page_universe = sorted({d.get("page_id") for d in (entry.get("layout_dets") or [])
                               if d.get("page_id") is not None})
     return g
 
 
-# ============================================================
-# METRIC FUNCTIONS
-# ============================================================
-
 @dataclass
 class TextMatch:
-    """Paper-faithful matching of pred text blocks to gold text blocks, per page-rank.
-
-    ``per_page[r]`` is ``match_gt2pred_quick``'s record list for the r-th page (gold text items vs pred
-    text items; one record may cover several gold blocks). Consumed by ``score_text`` (edit distance over matched pairs), ``score_reading_order``
-    (order of the matched gold indices) and ``score_text_diag`` (segmentation P/R/F1)."""
     per_page: List[List[Dict[str, Any]]]
     n_gold: int
     n_pred: int
@@ -606,13 +479,6 @@ def _pred_text_entries(pred: PredDoc) -> List[Tuple[int, int, str, str]]:
 
 def _group_text_by_rank(entries: List[Tuple[int, int, str, str]],
                         rank_of: Dict[int, int]) -> Dict[int, List[Dict[str, Any]]]:
-    """Drop items whose *normalised* text is empty (so the matcher's own empty-filter can never desync
-    its record indices), place each item on its page's SHARED rank (``rank_of``, built by ``match_text``
-    so rank *i* denotes the same physical page on both sides), and within each rank sort by reading order
-    and emit the ``text_all`` dicts the benchmark's matcher expects — with a 1-based within-page
-    ``order``/``position`` (1-based so ``get_order_paired`` never drops element #0). Entries whose page is
-    absent from ``rank_of`` are skipped defensively (``match_text`` seeds ``rank_of`` from the entries, so
-    this cannot drop real content)."""
     from collections import defaultdict
     kept = [(p, o, txt, cat) for (p, o, txt, cat) in entries if _norm_text(txt) and p in rank_of]
     groups: Dict[int, List[Tuple[int, str, str]]] = defaultdict(list)
@@ -628,20 +494,9 @@ def _group_text_by_rank(entries: List[Tuple[int, int, str, str]],
 
 
 def match_text(pred: PredDoc, gold: GoldDoc) -> TextMatch:
-    """Match pred text blocks to gold text blocks the official way (``match_gt2pred_quick``, the matcher
-    of MPDocBench's configs/end2end.yaml: one pred block may cover several gold blocks), per page-rank.
-    Call AFTER ``apply_table_text_redirect`` so pred tables that won no gold table (really prose) are
-    counted in the text stream."""
     matcher = _load_leaf()["match_gt2pred"]
-    gold_entries = _gold_text_entries(gold)   # page = gold page_id (1-based physical)
-    pred_entries = _pred_text_entries(pred)   # page = OCR page (0-based)
-    # Align both sides on ONE shared physical-page frame. gold page_id and pred OCR page index the SAME
-    # physical page up to a constant base offset (OCR is 0-based, gold 1-based -> offset 1; verified
-    # on the development documents). Derive the offset from each side's MINIMUM page so it self-adjusts
-    # (real data -> 1; a same-frame hand-built fixture -> 0) instead of hardcoding it. Then rank over the
-    # UNION of both sides' full page universes (all dets / all units, each unioned with its text pages),
-    # so a cover, an interior page empty on both sides, an over-produced page, or a whole-page drop keeps
-    # the SHARED pages aligned and costs only its own rank — never shifting the pages after it.
+    gold_entries = _gold_text_entries(gold)
+    pred_entries = _pred_text_entries(pred)
     gold_pages = set(gold.page_universe) | {p for (p, _, _, _) in gold_entries}
     pred_pages = set(pred.page_universe) | {p for (p, _, _, _) in pred_entries}
     offset = (min(gold_pages) - min(pred_pages)) if (gold_pages and pred_pages) else 0
@@ -661,17 +516,6 @@ def match_text(pred: PredDoc, gold: GoldDoc) -> TextMatch:
 
 
 def score_text(pred: PredDoc, gold: GoldDoc) -> Dict[str, Any]:
-    """Whole-document text edit distance (the "smoothie" content-fidelity metric): concatenate ALL gold
-    text and ALL pred text into one string each, normalise, and take a single Levenshtein.
-
-    This is deliberately **segmentation-blind** — it measures whether the *words* were captured, not how
-    they were chopped into blocks. So it neither penalises under-segmentation (merged blocks are invisible
-    once concatenated) nor credits finer splitting; the segmentation signal lives in ``score_text_diag``
-    (and, for ordering, ``score_reading_order``). NB: because it is whole-string, it is NOT directly
-    comparable to the paper's per-block ``edit_whole`` — treat it as our own content-fidelity number.
-
-    Call AFTER ``apply_table_text_redirect`` so pred tables that won no gold table (really prose) are
-    included in the pred string."""
     gold_txt = _norm_text(" ".join(t["text"] for t in gold.text_elems if t.get("text")))
     pred_txt = _norm_text(" ".join(
         e.text for e in pred.elements
@@ -683,12 +527,6 @@ def score_text(pred: PredDoc, gold: GoldDoc) -> Dict[str, Any]:
 
 
 def score_text_diag(match: TextMatch) -> Optional[Dict[str, Any]]:
-    """OUR diagnostic (NOT paper-comparable): segmentation precision/recall/F1 of the text matching. A
-    matched pair is a "true match" iff its normalised edit distance <= ``TEXT_DIAG_MATCH_EDIT``; a record
-    that covers several gold blocks counts once.
-    recall = true/n_gold (under-segmentation lowers it: merged blocks leave gold blocks unmatched);
-    precision = true/n_pred (over-production lowers it: extra pred blocks win no gold). This is the real
-    signal the headline text edit deliberately hides. None when there is no text on either side."""
     if match.n_gold == 0 and match.n_pred == 0:
         return None
     L = _load_leaf()
@@ -710,9 +548,6 @@ def score_text_diag(match: TextMatch) -> Optional[Dict[str, Any]]:
 
 
 def score_equations_diag(pred: PredDoc, gold: GoldDoc) -> Optional[Dict[str, Any]]:
-    """Toolchain-free diagnostic (ours, NOT the paper): per-equation normalized-Levenshtein edit
-    similarity, paired by reading order (gold[i] vs pred[i]). Kept alongside the paper-faithful CDM
-    `equation` as `equation_diag`, and reused verbatim as the honest fallback when CDM is unavailable."""
     if not gold.equations:
         return None
     pred_eqs = [e.latex for e in pred.elements if e.block_type == "equation" and e.latex]
@@ -727,15 +562,6 @@ def score_equations_diag(pred: PredDoc, gold: GoldDoc) -> Optional[Dict[str, Any
 
 def score_equations(pred: PredDoc, gold: GoldDoc, doc: str = "",
                     work_dir: Optional[Path] = None) -> Optional[Dict[str, Any]]:
-    """Paper-faithful Formula metric = CDM (Character Detection Matching).
-
-    Reuses the paper's OWN code via ``src.eval.cdm_formula`` (unchanged): align our predicted equation
-    LaTeX to the gold with ``utils.match.match_gt2pred_simple``, score each matched pair with the paper's
-    ``metrics.cdm_metric.CDM.evaluate``, and report the per-doc micro-mean of pair F1 (`score`). The corpus
-    number is micro-aggregated over ALL pairs in ``_aggregate`` (see ``_equation_micro``), matching the
-    paper. Falls back to the edit-distance diagnostic (``method='edit'``) — never crashing the eval — when
-    ``EQUATION_METRIC != 'cdm'`` or the CDM toolchain (xelatex + ImageMagick + node) is unavailable; the
-    ``method`` field keeps a fallback from ever being presented as CDM."""
     if not gold.equations:
         return None
     if config.EQUATION_METRIC == "cdm" and cdm_formula.cdm_available():
@@ -750,7 +576,7 @@ def score_equations(pred: PredDoc, gold: GoldDoc, doc: str = "",
                     "precision": (sum(r["precision"]) / len(r["precision"])) if r["precision"] else 0.0,
                     "recall": (sum(r["recall"]) / len(r["recall"])) if r["recall"] else 0.0,
                     "method": "cdm"}
-        except Exception as exc:  # noqa: BLE001 — a metric must never break the eval; degrade to edit
+        except Exception as exc:
             print(f"[cdm_formula] CDM scoring failed for {doc!r} ({exc}); falling back to edit distance")
     diag = score_equations_diag(pred, gold)
     return {**diag, "method": "edit"} if diag is not None else None
@@ -758,13 +584,6 @@ def score_equations(pred: PredDoc, gold: GoldDoc, doc: str = "",
 
 @dataclass
 class TableMatch:
-    """Result of matching predicted table elements to gold tables the paper's way (best-match).
-
-    ``gold_scores`` has one entry per gold table (TEDS vs its assigned pred, or 0.0 if that gold got no
-    pred — MPDocBench counts a missed gold as 0). ``unmatched_pred`` are the pred table *elements* that
-    won no gold (extra predictions); their text is redirected into the text metric by
-    ``apply_table_text_redirect``. ``pair_teds`` (assigned pairs only) feeds ``score_table_diag``.
-    """
     gold_scores: List[float]
     gold_scores_struct: List[float]
     pair_teds: List[float]
@@ -775,19 +594,14 @@ class TableMatch:
 
 
 def match_tables(pred: PredDoc, gold: GoldDoc) -> TableMatch:
-    """Assign predicted tables to gold tables by MPDocBench's method: globally-optimal (Hungarian, or
-    greedy fallback via ``_assign``) matching that maximises total table similarity (1 - normalised HTML
-    edit distance), then score each gold against its assigned pred with TEDS. No assignment threshold
-    (as in the paper: even a poor pair is assigned and its low TEDS counts). Runs even when the gold has
-    no tables, so the unmatched pred tables can still be redirected to the text metric."""
     pred_tbl = [e for e in pred.elements if e.block_type == "table" and e.html]
     gold_htmls = [_norm_table_html(t.get("html", "")) for t in gold.tables]
     pred_htmls = [_norm_table_html(e.html) for e in pred_tbl]
     n_gold, n_pred = len(gold_htmls), len(pred_tbl)
     if n_gold == 0 or n_pred == 0:
         return TableMatch([0.0] * n_gold, [0.0] * n_gold, [], set(), list(pred_tbl), n_gold, n_pred)
-    sim = [[_edit_score(g, p) for p in pred_htmls] for g in gold_htmls]  # 1 - normalised edit distance
-    gold_to_pred = {gi: pi for gi, pi in _assign(sim)}  # (gold_idx, pred_idx) optimal pairs
+    sim = [[_edit_score(g, p) for p in pred_htmls] for g in gold_htmls]
+    gold_to_pred = {gi: pi for gi, pi in _assign(sim)}
     L = _load_leaf()
     teds = L["TEDS"](structure_only=False)
     teds_s = L["TEDS"](structure_only=True)
@@ -797,7 +611,7 @@ def match_tables(pred: PredDoc, gold: GoldDoc) -> TableMatch:
     matched: set = set()
     for gi in range(n_gold):
         pi = gold_to_pred.get(gi)
-        if pi is None:  # this gold table got no prediction -> 0 (recall penalty, as in the paper)
+        if pi is None:
             gold_scores.append(0.0)
             gold_scores_struct.append(0.0)
             continue
@@ -819,10 +633,6 @@ def match_tables(pred: PredDoc, gold: GoldDoc) -> TableMatch:
 
 
 def score_tables(pred: PredDoc, gold: GoldDoc, match: TableMatch) -> Optional[Dict[str, Any]]:
-    """Paper-faithful Table TEDS: mean TEDS over gold tables under the best-match assignment (a missed
-    gold scores 0). Over-predicted tables are NOT penalised here — their text is redirected to the text
-    metric by ``apply_table_text_redirect`` — mirroring MPDocBench's own table metric (Hungarian match,
-    mean TEDS, no precision term). ``score_table_diag`` is our separate, non-comparable count metric."""
     if not gold.tables:
         return None
     gs, gss = match.gold_scores, match.gold_scores_struct
@@ -887,14 +697,6 @@ def _compute_iou(a: List[float], b: List[float]) -> float:
 
 
 def score_reading_order(match: TextMatch) -> Dict[str, Any]:
-    """Paper-faithful reading order (MPDocBench ``get_order_paired``), per page-rank: build ``gt`` = the
-    order-positions of every gold text block, and ``pred`` = those same positions reordered by where the
-    matched pred put them, then Levenshtein over the two index sequences, micro-averaged
-    Sum(edit)/Sum(upper) across pages. Because both sides draw from the same matched gold-index universe,
-    segmentation *count* alone no longer inflates the score (as the old category-symbol proxy did) — a
-    genuine order permutation does, and unmatched gold blocks still cost deletions. A gold block covered
-    by a pred block that also covers its neighbours (quick_match) counts as matched, in that block's place.
-    Positions are 1-based so the ``if x`` guards (mirrored from the benchmark) never drop element #0."""
     L = _load_leaf()
     lev = L["lev_distance"]
     edit_num = upper = 0
@@ -908,8 +710,6 @@ def score_reading_order(match: TextMatch) -> Dict[str, Any]:
         prd = [x for grp in read_order_pred for x in grp if x]
         if not gt and not prd:
             continue
-        # tokens are small 1-based ints; map to distinct chars so any Levenshtein backend accepts them
-        # (edit distance is invariant under this bijection, so results match the paper's int-list form).
         gt_s = "".join(chr(x) for x in gt)
         prd_s = "".join(chr(x) for x in prd)
         edit_num += lev(prd_s, gt_s)
@@ -922,17 +722,6 @@ def score_reading_order(match: TextMatch) -> Dict[str, Any]:
 
 
 def score_merged_text(pred: PredDoc, gold: GoldDoc) -> Optional[Dict[str, Any]]:
-    """Reconstruction fidelity of each gold merged (truncated) text element.
-
-    MPDocBench's *Truncated Text* metric scores how faithfully the **reconstructed merged element**
-    is reproduced — not whether the system flagged a multi-page span. Crucially, MPDocBench's own
-    truncated relations are dominated by **within-page** (column->column) continuations, which our
-    extractor reconstructs *inline* as ONE ``text_block``. So we score each gold merged element
-    against the **best-matching single pred text unit** (any page span): a correct inline merge ->
-    the block holding the rejoined paragraph matches; a genuine column-split -> no single unit
-    matches. (The earlier cross-page-span-only proxy scored a correct within-page merge as 0.)
-    ``n_pred_merges`` — units whose ``source_block_ids`` span >1 page — is kept only as a diagnostic.
-    """
     if not gold.merged_text:
         return None
     cands = [c for c in (_norm_text(e.text) for e in pred.elements
@@ -943,8 +732,6 @@ def score_merged_text(pred: PredDoc, gold: GoldDoc) -> Optional[Dict[str, Any]]:
         g = _norm_text(m.get("text", ""))
         if not g:
             continue
-        # A far-longer candidate can only score low (edit_score <= 1 - |Δlen|/max_len); skip it for
-        # speed, keep every candidate of comparable length so the true reconstruction is never pruned.
         cap = 4 * len(g) + 200
         best = max((_edit_score(c, g) for c in cands if len(c) <= cap), default=0.0)
         scores.append(best)
@@ -958,13 +745,6 @@ def score_merged_text(pred: PredDoc, gold: GoldDoc) -> Optional[Dict[str, Any]]:
 
 
 def score_merged_table(pred: PredDoc, gold: GoldDoc) -> Optional[Dict[str, Any]]:
-    """Reconstruction fidelity of each gold merged table (best TEDS vs any single pred table).
-
-    Same intent as ``score_merged_text``: a same-page or cross-page merged table that we emit as
-    ONE table is credited; a split is not. Matching by best TEDS (not by reading-order rank) so a
-    correct same-page column-split table — which our pipeline cannot flag as cross-page — is still
-    credited. ``n_pred_merges`` (cross-page-flagged tables) kept as a diagnostic.
-    """
     if not gold.merged_tables:
         return None
     L = _load_leaf()
@@ -999,8 +779,6 @@ def score_merged_table(pred: PredDoc, gold: GoldDoc) -> Optional[Dict[str, Any]]
 
 
 def score_relation(pred: PredDoc, gold_entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Optional table-truncation relation F1 via the benchmark's relation_utils. Best-effort:
-    returns None on any plumbing/shape issue (this metric is disabled in their default config)."""
     try:
         L = _load_leaf()
         ru = L["relation_utils"]
@@ -1026,28 +804,11 @@ def score_relation(pred: PredDoc, gold_entry: Dict[str, Any]) -> Optional[Dict[s
         return None
 
 
-# ============================================================
-# ORCHESTRATION
-# ============================================================
-
 def _domain_map(stems) -> Dict[str, str]:
-    """stem -> domain (the stem prefix, config.domain_for), for the per-domain breakdown of the report."""
     return {s: (config.domain_for(s) or "unknown") for s in stems}
 
 
 def apply_table_text_redirect(pred: PredDoc, match: TableMatch) -> None:
-    """Redirect every predicted table that won no gold table into the text stream, in place — the
-    paper's ``unmatch_table_pred -> text`` behaviour.
-
-    Chandra OCR routinely serializes borderless, column-aligned prose (tables of contents, index pages,
-    aligned lists — anything "structured like a table" without rules/borders) as a Markdown/HTML table,
-    and our extractor faithfully carries it through as a ``table`` block. When the gold has no matching
-    table, that block is really text: excluded from the text metric (tables route to ``html``) and
-    unscored by the table metric — double-penalising a *correct* read (worst case a prospectus table of
-    contents). Flipping each unmatched pred table to a ``text_block`` (carrying its flattened
-    ``table_text``) is made once, here, so it propagates coherently to every metric. Matched tables (they
-    won a gold in ``match_tables``) are untouched.
-    """
     for e in match.unmatched_pred:
         e.block_type = "text_block"
         e.category = BLOCK_TO_CATEGORY["text_block"]
@@ -1056,11 +817,6 @@ def apply_table_text_redirect(pred: PredDoc, match: TableMatch) -> None:
 
 
 def score_table_diag(match: TableMatch) -> Optional[Dict[str, Any]]:
-    """OUR diagnostic (NOT paper-comparable): best-match precision/recall/F1 on table COUNT, plus the
-    matched-pair TEDS quality. A pair counts as a true match iff its TEDS >= ``TABLE_DIAG_MATCH_TEDS``.
-    Unlike the headline metric this surfaces over-prediction (precision<1), misses (recall<1) AND
-    misclassification (an assigned pair below the threshold — e.g. a TOC forced onto a real gold table on
-    an equal-count doc, which the headline TEDS hides). None when the doc has no tables on either side."""
     if match.n_gold == 0 and match.n_pred == 0:
         return None
     true_matches = sum(1 for t in match.pair_teds if t >= TABLE_DIAG_MATCH_TEDS)
@@ -1077,15 +833,15 @@ def evaluate_doc(doc: str, fd: Dict[str, Any], gold_entry: Dict[str, Any],
                  work_dir: Optional[Path] = None) -> Dict[str, Any]:
     pred = build_pred_doc(fd, doc)
     gold = build_gold_doc(gold_entry)
-    match = match_tables(pred, gold)  # paper-faithful best-match of pred tables to gold tables
-    apply_table_text_redirect(pred, match)  # unmatched pred tables' text -> the text metric (paper)
-    text_match = match_text(pred, gold)  # per-page text-block matching (AFTER redirect); feeds diag+order
+    match = match_tables(pred, gold)
+    apply_table_text_redirect(pred, match)
+    text_match = match_text(pred, gold)
     return {
         "doc": doc,
         "text": score_text(pred, gold),
         "text_diag": score_text_diag(text_match),
-        "equation": score_equations(pred, gold, doc, work_dir),        # paper CDM (or honest edit fallback)
-        "equation_diag": score_equations_diag(pred, gold),             # ours (edit distance), always present
+        "equation": score_equations(pred, gold, doc, work_dir),
+        "equation_diag": score_equations_diag(pred, gold),
         "table": score_tables(pred, gold, match),
         "table_diag": score_table_diag(match),
         "heads": score_heads(pred, gold),
@@ -1105,7 +861,6 @@ def evaluate_doc(doc: str, fd: Dict[str, Any], gold_entry: Dict[str, Any],
     }
 
 
-# metric -> (path into the per-doc dict, "higher is better" primary key)
 _PRIMARY = [
     ("text", ["text", "score"]),
     ("text_diag_f1", ["text_diag", "f1"]),
@@ -1136,10 +891,6 @@ def _mean(xs: List[float]) -> Optional[float]:
     return sum(xs) / len(xs) if xs else None
 
 
-# reading_order follows the paper's corpus micro-average (Sum edits / Sum uppers), NOT the macro
-# mean-over-docs used for every other metric. ``_micro`` overrides its ``overall``/``by_domain`` value
-# (the per-doc ``score`` in the _PRIMARY table is the doc-level micro, kept for the per-document view).
-# ``text`` is the whole-string smoothie -> plain macro mean-over-docs like the rest (NOT micro here).
 _MICRO_METRICS = ("reading_order",)
 
 
@@ -1150,10 +901,6 @@ def _micro(docs: List[Dict[str, Any]], metric: str) -> Optional[float]:
 
 
 def _equation_micro(docs: List[Dict[str, Any]]) -> Optional[float]:
-    """Paper CDM aggregation: micro-mean of pair F1 over ALL formula pairs (Sum sum_f1 / Sum n_pairs),
-    matching metrics/cal_metric.call_CDM (a sample-level, not per-doc, average). Returns None unless EVERY
-    doc with equations was scored by CDM — so an edit-fallback (or mixed) run keeps the macro mean-over-docs
-    from ``_PRIMARY`` and the report labels it honestly rather than presenting it as CDM."""
     eqs = [d["equation"] for d in docs if d.get("equation")]
     if not eqs or not all(e.get("method") == "cdm" and "n_pairs" in e for e in eqs):
         return None
@@ -1168,7 +915,7 @@ def _aggregate(per_doc: List[Dict[str, Any]], domain_of: Dict[str, str]) -> Dict
         overall[name] = _mean([v for v in (_dig(d, path) for d in per_doc) if v is not None])
     for m in _MICRO_METRICS:
         overall[m] = _micro(per_doc, m)
-    _eqm = _equation_micro(per_doc)                     # CDM: micro over all pairs (else keep the macro mean)
+    _eqm = _equation_micro(per_doc)
     if _eqm is not None:
         overall["equation"] = _eqm
     by_domain: Dict[str, Dict[str, Optional[float]]] = {}
@@ -1187,10 +934,6 @@ def _aggregate(per_doc: List[Dict[str, Any]], domain_of: Dict[str, str]) -> Dict
 
 
 def _resolve_cdm_work_dir(run_dir: Path) -> Path:
-    """Where CDM renders its scratch tex/pdf/png. An explicit ``config.EQUATION_CDM_WORK_DIR`` (space-free)
-    wins; else the default under the run dir. The override exists because the vendored CDM renderer shells
-    out to xelatex/ImageMagick with UNQUOTED paths and this repo lives under a path containing spaces — a
-    scratch dir with spaces makes every render silently fail -> F1 0."""
     override = getattr(config, "EQUATION_CDM_WORK_DIR", None)
     return Path(override) if override else run_dir / "_mpdocbench" / "_cdm_work"
 
@@ -1206,7 +949,7 @@ def evaluate_run(run_dir: Path) -> Dict[str, Any]:
         fd_paths = sorted(run_dir.glob("*/final_document.json"))
         single = True
 
-    cdm_work = _resolve_cdm_work_dir(run_dir)  # CDM render scratch (per-doc subdirs; cleaned unless kept)
+    cdm_work = _resolve_cdm_work_dir(run_dir)
     by_model: Dict[str, List[Dict[str, Any]]] = {}
     skipped: List[str] = []
     for fd_path in fd_paths:
@@ -1238,10 +981,6 @@ def evaluate_run(run_dir: Path) -> Dict[str, Any]:
     return results
 
 
-# ============================================================
-# WEAK-SPOT REPORT (plain tone)
-# ============================================================
-
 _METRIC_LABELS = [
     ("text", "Text"), ("text_diag_f1", "TxtDiagF1"), ("table", "Table"), ("heads", "Heading"),
     ("figure_f1", "Figure"), ("equation", "Equation"), ("equation_diag", "EqDiag"),
@@ -1251,8 +990,6 @@ _METRIC_LABELS = [
 
 
 def _equation_method(per_doc: List[Dict[str, Any]]) -> Optional[str]:
-    """The scoring method behind the `equation` column for this model: 'cdm', 'edit', 'mixed', or None
-    (no equations). Drives the honest column label so an edit-fallback number is never shown as CDM."""
     methods = {d["equation"]["method"] for d in per_doc
                if d.get("equation") and d["equation"].get("method")}
     if not methods:
@@ -1279,8 +1016,6 @@ def render_weak_spots(results: Dict[str, Any], domain_of: Dict[str, str]) -> str
     for model, mres in results["models"].items():
         agg = mres["aggregate"]
         lines += [f"## Model: {model}  ({agg['n_docs']} docs)", ""]
-        # Honest `equation` column label: paper CDM only when EVERY scored doc used CDM; otherwise mark the
-        # fallback so an edit-distance number is never presented under the CDM name.
         eq_method = _equation_method(mres["per_doc"])
         eq_label = {"cdm": "Equation(CDM)", "edit": "Equation(edit!)",
                     "mixed": "Equation(mixed!)"}.get(eq_method, "Equation")
@@ -1291,7 +1026,6 @@ def render_weak_spots(results: Dict[str, Any], domain_of: Dict[str, str]) -> str
             lines += [f"> ⚠ Equation = edit-distance fallback, NOT paper CDM "
                       f"(CDM toolchain unavailable){' for: ' + ', '.join(sorted(fb)) if fb else ''}. "
                       f"`EqDiag` is always the edit-distance diagnostic.", ""]
-        # headline: metric x domain
         header = "| Domain | " + " | ".join(lbl for _, lbl in labels) + " |"
         sep = "|" + "---|" * (len(labels) + 1)
         lines += [header, sep]
@@ -1304,7 +1038,6 @@ def render_weak_spots(results: Dict[str, Any], domain_of: Dict[str, str]) -> str
                 _fmt(dm.get(k)) for k, _ in labels) + " |")
         lines.append("")
 
-        # where it struggles
         lines += ["### Where it struggles", ""]
         struggles = _find_struggles(mres["per_doc"], domain_of)
         if not struggles:
@@ -1314,7 +1047,6 @@ def render_weak_spots(results: Dict[str, Any], domain_of: Dict[str, str]) -> str
                 lines.append(f"- {s}")
             lines.append("")
 
-        # per-doc table
         lines += ["<details><summary>Per-document scores</summary>", "",
                   "| Doc | Domain | " + " | ".join(lbl for _, lbl in labels) + " |",
                   "|" + "---|" * (len(labels) + 2)]

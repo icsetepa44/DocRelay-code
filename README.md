@@ -107,7 +107,7 @@ that run's folder name.
 |---|---|---|
 | Text Edit | ↓ | 1 − character edit similarity of the whole document text, averaged over documents (`evaluate.py`) |
 | Table TEDS | ↑ | tree-edit similarity of the tables, averaged over documents that have tables (`table_structure.py`) |
-| C-P | ↓ | normalised edit distance of every gold clause that crosses a page against its best-matching run of predicted items (after lenient text normalisation), averaged per document (`cp_edit.py`) |
+| C-P | ↓ | normalised edit distance of every gold clause that crosses a page against its best-matching single predicted item (text cleaned and normalised first: case, spacing, punctuation and digit script ignored); per document, summed edits / summed lengths, then averaged over documents (`cp_edit.py`) |
 | C-P precision / recall / F1 | ↑ | every page boundary is labelled: joined correctly (TP), wrongly joined (FP) or wrongly split (FN); pooled over all boundaries (`boundary_labels.py`) |
 
 ## MPDocBench-Parse

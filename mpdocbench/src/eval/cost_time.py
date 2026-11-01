@@ -1,16 +1,3 @@
-"""
-Cost and time of one run, summed from the ledger that src/llm/usage.py + run.py write under
-``runs/<run>/_cost_time/``: ``llm_calls.jsonl`` (one line per HTTP attempt), ``pairs.jsonl`` (one line per
-(doc, model) attempt) and ``sessions.jsonl`` (one line per run.py pipeline session). Writes ``summary.json`` there.
-
-Counting rules:
-  * cost = the provider-reported ``usage.cost`` summed over the calls of each doc's KEPT session (the last session
-    that finished that doc). Calls of earlier, abandoned attempts (a doc reset on resume) are reported separately as
-    ``abandoned_cost_usd``, never mixed in. Calls with no reported cost are counted in ``calls_missing_cost``.
-  * wall time = the sum of the sessions' pipeline wall times (each run runs alone, so it is that run's own time).
-  * model time per page = the summed attempt latencies of a page's calls (median / p90 over pages).
-"""
-
 from __future__ import annotations
 
 import json
@@ -32,7 +19,7 @@ def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
             try:
                 out.append(json.loads(line))
             except ValueError:
-                continue          # a torn last line (killed mid-write) is skipped
+                continue
     return out
 
 
@@ -48,7 +35,6 @@ def _r(x: Optional[float], nd: int = 4) -> Optional[float]:
 
 
 def kept_sessions(pairs: List[Dict[str, Any]]) -> Dict[tuple, str]:
-    """(doc, label) -> the session whose attempt finished that pair ("done"); the last one wins."""
     kept: Dict[tuple, str] = {}
     for p in pairs:
         if p.get("status") == "done":
@@ -58,7 +44,6 @@ def kept_sessions(pairs: List[Dict[str, Any]]) -> Dict[tuple, str]:
 
 def summarize_records(calls: List[Dict[str, Any]], pairs: List[Dict[str, Any]],
                       sessions: List[Dict[str, Any]], pages_by_doc: Dict[str, int]) -> Dict[str, Any]:
-    """Pure: the summary of one run's ledger. ``pages_by_doc`` = pages of each finished doc (run_summary.json)."""
     kept = kept_sessions(pairs)
     kept_calls, abandoned = [], []
     for c in calls:
@@ -78,7 +63,7 @@ def summarize_records(calls: List[Dict[str, Any]], pairs: List[Dict[str, Any]],
         r["cost_usd"] += float(c.get("cost_usd") or 0.0)
         r["prompt_tokens"] += int(c.get("prompt_tokens") or 0)
         r["completion_tokens"] += int(c.get("completion_tokens") or 0)
-        r["latency_s"] += float(c.get("latency_s") or 0.0)   # summed attempt latency (model time) of this role
+        r["latency_s"] += float(c.get("latency_s") or 0.0)
     for r in by_role.values():
         r["cost_usd"] = round(r["cost_usd"], 6)
         r["latency_s"] = round(r["latency_s"], 1)
@@ -127,7 +112,6 @@ def _pages_by_doc(run_dir: Path) -> Dict[str, int]:
 
 
 def summarize(run_dir: Path) -> Optional[Dict[str, Any]]:
-    """Write ``<run>/_cost_time/summary.json``; None (nothing written) when the run has no ledger."""
     d = Path(run_dir) / usage.COST_TIME_DIR
     if not d.exists():
         return None

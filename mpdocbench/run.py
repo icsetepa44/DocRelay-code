@@ -1,29 +1,3 @@
-"""
-Single entry point for the MPDocBench-Parse extraction pipeline.
-
-No CLI — configure the run by editing the GLOBALS below, then (from the repository root):
-
-    python mpdocbench/run.py
-
-Stages (each gated by a boolean, run in this order):
-  RUN_OCR_PREFLIGHT -> read-only OCR check before a pipeline run (writes <run>/_preflight.json); a HARD problem
-                       (missing pages/images/layout/marker, no gold) aborts before any API call
-  RUN_PIPELINE      -> run the extraction pipeline on every document with OCR under data/mpdocbench/ocr/
-  RUN_EVAL          -> score with the MPDocBench metric code (writes <run>/_mpdocbench/metrics.json + weak_spots.md),
-                       the paper's six columns + Overall (paper_table.json) and cost + time (<run>/_cost_time/)
-
-The OCR itself is made beforehand by scripts/ocr_images.py (page images in, Chandra OCR out).
-
-RESUMABLE writes into a FIXED run dir (RUN_ID) so an interrupted run RESUMES: completed (doc, model) pairs are
-skipped and partially-written pairs are reset & recomputed. With RESUMABLE = False each run goes to a fresh
-timestamped dir.
-
-Eval-only on an existing run: set RUN_PIPELINE = False, RUN_EVAL = True, and point RUN_ID at that run.
-
-All pipeline and eval behaviour (models, retrieval, critic-corrector, CDM, request parameters) lives in
-config/pipeline.yaml, config/models.yaml and config/domain_profiles.yaml; this file is orchestration only.
-"""
-
 from __future__ import annotations
 
 import contextlib
@@ -38,52 +12,35 @@ from pathlib import Path
 DU = Path(__file__).resolve().parent
 sys.path.insert(0, str(DU))
 
-from src.core import orchestrator, config          # noqa: E402
-from src.ocr import chandra_adapter as ocr          # noqa: E402
-from src.storage import document_store as ds         # noqa: E402
-from src.storage import run_store                    # noqa: E402
-from src.registry import embedding_scorer            # noqa: E402
-from src.eval import mpdocbench                       # noqa: E402  (MPDocBench metric adapter)
-from src.eval import cost_time, paper_table           # noqa: E402  (per-run cost + time; paper columns + Overall)
-from src.llm import usage                             # noqa: E402  (cost/time ledger)
+from src.core import orchestrator, config
+from src.ocr import chandra_adapter as ocr
+from src.storage import document_store as ds
+from src.storage import run_store
+from src.registry import embedding_scorer
+from src.eval import mpdocbench
+from src.eval import cost_time, paper_table
+from src.llm import usage
 
-# ============================================================
-# RUN CONFIG (edit these globals)
-# ============================================================
 
-# --- what to run ---
-RUN_PIPELINE = True    # run the extraction pipeline
-RUN_EVAL = True        # MPDocBench eval + paper table + cost/time after the pipeline
-RESUMABLE = True       # skip completed (doc,model) pairs into a fixed run dir; False -> fresh timestamped run
-RUN_OCR_PREFLIGHT = True  # read-only OCR check before a pipeline run (writes <run>/_preflight.json); a HARD
-                          # problem (missing pages/images/layout/marker, no gold) aborts before any API call
+RUN_PIPELINE = True
+RUN_EVAL = True
+RESUMABLE = True
+RUN_OCR_PREFLIGHT = True
 
-# --- run parameters ---
-RUN_ID = "mpdocbench_full"       # fixed dir name under mpdocbench/runs/ (used when RESUMABLE, or for eval-only reuse)
-DOCUMENTS = None                 # None -> every document with OCR under config.BENCHMARK_OCR_PARENT; or a list of stems
-MODELS = None                    # None -> config/models.yaml roles.extractor.models
-PAPER_TABLE_RUNS = None          # None -> the paper table of this run only; or a list of run ids to pool (e.g. an
-                                 # English and a Chinese run), all already evaluated
+RUN_ID = "mpdocbench_full"
+DOCUMENTS = None
+MODELS = None
+PAPER_TABLE_RUNS = None
 PAGE_START = 0
 PAGE_END = None
-RUN_FINAL_VALIDATOR = False      # optional report-only document-level LLM check (final_validation.json); it never
-                                 # changes the output and is not part of the method described in the paper
+RUN_FINAL_VALIDATOR = False
 STOP_ON_PAGE_ERROR = False
 OVERWRITE_IMAGES = False
-MAX_WORKERS = 8                  # concurrent (model, doc) pairs; None -> one worker per extractor model
-# QUIET: the console shows ONLY the page progress bar (with docs done / left / errors) plus a final line (and
-# any abort reason). Everything else — config, preflight, per-page lines, warnings, eval — goes to
-# runs/<RUN_ID>/run.log. False -> the full verbose console (log lines printed above the bar).
+MAX_WORKERS = 8
 QUIET = True
 
 
-# ============================================================
-# Pipeline
-# ============================================================
-
 def _pair_complete(run_dir: Path, doc: str, label: str) -> bool:
-    """A (doc, model) pair is complete iff final_document.json AND run_summary.json both
-    exist and parse as valid JSON (both written at the end, so a torn write reads as incomplete)."""
     import json
     d = run_dir / doc / label
     for name in ("final_document.json", "run_summary.json"):
@@ -98,9 +55,6 @@ def _pair_complete(run_dir: Path, doc: str, label: str) -> bool:
 
 
 def _run_one_pair(model: dict, doc: str, run_dir: Path, on_page_done=None) -> tuple:
-    """Run ONE (model, doc). Safe to call concurrently from worker threads: it writes only under
-    run_dir/<doc>/<label>/ and uses a per-doc StitchIdAllocator.
-    Preconditions (done once before the pool): materialise assets, warm singletons."""
     label = config.model_label(model["model"])
     if RESUMABLE and _pair_complete(run_dir, doc, label):
         print(f"[{label}] SKIP completed: {doc}", flush=True)
@@ -113,23 +67,22 @@ def _run_one_pair(model: dict, doc: str, run_dir: Path, on_page_done=None) -> tu
         print(f"[{label}] run: {doc}", flush=True)
     started, t0 = usage.now_iso(), time.perf_counter()
     try:
-        with usage.tags(doc=doc, label=label):   # every LLM call of this pair lands in the ledger with doc + label
+        with usage.tags(doc=doc, label=label):
             orchestrator.run_document(
                 doc_name=doc,
                 run_dir=run_dir,
                 page_start=PAGE_START,
                 page_end=PAGE_END,
                 run_final_validator=RUN_FINAL_VALIDATOR,
-                # unresolved_policy omitted -> orchestrator uses config.UNRESOLVED_POLICY (config/pipeline.yaml)
-                overwrite_images=False,          # assets pre-materialised once below
+                overwrite_images=False,
                 stop_on_page_error=STOP_ON_PAGE_ERROR,
                 extractor_model=model,
                 model_label=label,
-                domain=config.domain_for(doc),   # per-domain profile (config/domain_profiles.yaml)
-                on_page_done=on_page_done,       # page-level progress bar tick
+                domain=config.domain_for(doc),
+                on_page_done=on_page_done,
             )
         status, error = "done", None
-    except Exception as exc:  # noqa: BLE001 — keep other pairs going; a rerun retries this one
+    except Exception as exc:
         print(f"[{label}] ERROR on {doc}: {exc}", flush=True)
         status, error = "error", str(exc)
     usage.append(usage.PAIRS_FILE, {"doc": doc, "label": label, "start": started, "end": usage.now_iso(),
@@ -139,7 +92,6 @@ def _run_one_pair(model: dict, doc: str, run_dir: Path, on_page_done=None) -> tu
 
 
 def _build_reports(run_dir: Path) -> None:
-    """Score predictions with the MPDocBench metric code, then the paper table and the cost/time summary."""
     print("  MPDocBench eval -> _mpdocbench/{metrics.json, weak_spots.md}", flush=True)
     mpdocbench.evaluate_run(run_dir)
     runs = [config.RUNS_DIR / r for r in PAPER_TABLE_RUNS] if PAPER_TABLE_RUNS else [run_dir]
@@ -150,14 +102,10 @@ def _build_reports(run_dir: Path) -> None:
 
 
 def _pages_in_range(n: int) -> int:
-    """Pages run_document will process for a doc with n pages, given PAGE_START / PAGE_END."""
     return len(range(n)[PAGE_START:PAGE_END])
 
 
 class _TqdmStdout:
-    """stdout shim for the duration of the pool: each printed line goes through tqdm.write, so log lines from
-    the worker threads appear ABOVE the progress bar instead of tearing it."""
-
     def __init__(self, tqdm_cls, target):
         self._tqdm, self._target, self._buf = tqdm_cls, target, ""
         self._lock = threading.Lock()
@@ -179,23 +127,17 @@ class _TqdmStdout:
 
 
 def _doc_progress(done: int, total: int, errors: int) -> str:
-    """Progress-bar postfix: documents done out of the total, plus errored documents."""
     return f"docs {done}/{total} done, {errors} errors"
 
 
-# pages done/total, docs done/total (+ errors) via the postfix, elapsed time and ETA.
 _BAR_FORMAT = "{desc} |{bar}| {n_fmt}/{total_fmt} pages{postfix} | elapsed {elapsed} | ETA {remaining}"
 
 
 class _Bars:
-    """The console progress bar (tqdm on the real stderr, shown in QUIET mode too): pages done/total, docs
-    done/total (+ errors), elapsed time and ETA. Resumed runs start pre-filled, so the ETA covers only the work
-    left. Without tqdm: silent no-ops."""
-
     def __init__(self, console_err):
         try:
             from tqdm import tqdm
-        except Exception:  # noqa: BLE001
+        except Exception:
             tqdm = None
         self.tqdm, self.file = tqdm, console_err
         self.lock = threading.Lock()
@@ -210,11 +152,10 @@ class _Bars:
             self.run = self.tqdm(total=total_pages, initial=done_pages, unit="page", desc=desc, position=0,
                                  dynamic_ncols=True, smoothing=0.05, file=self.file, bar_format=_BAR_FORMAT,
                                  postfix=_doc_progress(done_docs, total_docs, 0))
-        except Exception:  # noqa: BLE001
+        except Exception:
             self.run = None
 
     def tick(self, _page_number: int = 0) -> None:
-        """One page processed (orchestrator on_page_done hook, any worker thread)."""
         with self.lock:
             self.run_pages += 1
             if self.run is not None:
@@ -234,12 +175,10 @@ class _Bars:
         return self.run is not None
 
     def write(self, msg: str) -> None:
-        """A console line printed ABOVE the bar (so it is not torn)."""
         self.tqdm.write(msg, file=self.file)
 
 
 def _preflight(docs: list, run_dir: Path) -> bool:
-    """Read-only OCR preflight; writes <run>/_preflight.json. False -> a HARD problem (do not run)."""
     import json
     from src.ocr import preflight
     report = preflight.run_preflight(docs, gold_stems=set(mpdocbench.load_gold_index()))
@@ -250,12 +189,10 @@ def _preflight(docs: list, run_dir: Path) -> bool:
 
 
 def main() -> int:
-    # The real console, captured before QUIET redirects stdout/stderr into the run log.
     console_out, console_err = sys.stdout, sys.stderr
     bars = _Bars(console_err)
 
     def say(msg: str) -> None:
-        """Always reaches the console (abort reasons + the final line), even in QUIET mode."""
         if bars.active():
             bars.write(msg)
         else:
@@ -275,7 +212,6 @@ def main() -> int:
         say(f"No documents (OCR expected under {config.BENCHMARK_OCR_PARENT}) or no extractor models configured.")
         return 1
 
-    # Fixed run dir when resuming, or when doing eval-only on an existing run; else timestamped.
     use_fixed = RESUMABLE or (RUN_EVAL and not RUN_PIPELINE)
     run_dir = run_store.create_run_dir(RUN_ID if use_fixed else None)
     log_path = run_dir / "run.log"
@@ -318,14 +254,11 @@ def _run(docs: list, models: list, run_dir: Path, say, log_path: Path, bars: _Ba
             print(f"Embedding model ready (dim={dim}).", flush=True)
         print("Pre-materialising page assets…", flush=True)
         n_pages = {doc: len(ds.materialize_document(doc, overwrite=OVERWRITE_IMAGES)) for doc in docs}
-        # One task per (model, doc), longest docs first so they start immediately (best makespan).
         pairs = [(m, doc) for m in models for doc in sorted(docs, key=lambda d: -n_pages[d])]
         n_pairs = len(pairs)
         workers = MAX_WORKERS or len(models)
         print(f"Running {n_pairs} (model,doc) pair(s) with {workers} worker thread(s)…", flush=True)
 
-        # Page-level progress bar: total = pages of every pair; already-complete pairs (resume) start it
-        # pre-filled (pages AND docs) so the ETA covers only the remaining work.
         complete = {(config.model_label(m["model"]), doc) for m, doc in pairs
                     if RESUMABLE and _pair_complete(run_dir, doc, config.model_label(m["model"]))}
         total_pages = sum(_pages_in_range(n_pages[doc]) for _, doc in pairs)
@@ -334,12 +267,9 @@ def _run(docs: list, models: list, run_dir: Path, say, log_path: Path, bars: _Ba
         done = len(complete)
         bars.open_run("pages", total_pages, done_pages, n_pairs, done)
 
-        # Verbose mode: route log lines through tqdm.write so they print above the bar. QUIET: stdout is
-        # already the run log, so no shim is needed.
         redirect = (contextlib.redirect_stdout(_TqdmStdout(bars.tqdm, sys.stdout))
                     if bars.run is not None and not QUIET else contextlib.nullcontext())
         finished = 0
-        # Cost + time ledger (runs/<run>/_cost_time/): every LLM attempt, every pair, and this session's wall time.
         session, t0 = usage.now_iso(), time.perf_counter()
         with usage.ledger(run_dir, session):
             try:
@@ -350,15 +280,15 @@ def _run(docs: list, models: list, run_dir: Path, say, log_path: Path, bars: _Ba
                         finished += 1
                         try:
                             label, d, status = fut.result()
-                        except Exception as exc:  # noqa: BLE001
+                        except Exception as exc:
                             label, d, status = config.model_label(m["model"]), doc, f"error: {exc}"
                         if status.startswith("error"):
                             errors += 1
-                        elif status != "skipped":  # skipped pairs were already counted as done
+                        elif status != "skipped":
                             done += 1
                         print(f"=== [{finished}/{n_pairs}] {label} {d} -> {status} ===", flush=True)
                         bars.docs(done, n_pairs, errors)
-            finally:  # also on Ctrl+C, so an interrupted session's wall time still counts toward the run
+            finally:
                 usage.append(usage.SESSIONS_FILE, {"start": session, "end": usage.now_iso(),
                                                    "wall_s": round(time.perf_counter() - t0, 1), "pairs": n_pairs,
                                                    "skipped": len(complete), "done": done - len(complete),
@@ -368,7 +298,6 @@ def _run(docs: list, models: list, run_dir: Path, say, log_path: Path, bars: _Ba
         print(f"Pages: {pages_done}/{total_pages} | {_doc_progress(done, n_pairs, errors)}", flush=True)
 
     if RUN_EVAL:
-        # Defer eval until EVERY pair is complete, so an interrupted run never emits partial metrics.
         incomplete = [(doc, config.model_label(m["model"]))
                       for m in models for doc in docs
                       if not _pair_complete(run_dir, doc, config.model_label(m["model"]))]

@@ -14,12 +14,12 @@ def test_read_page_records_sorted_and_build_page_data():
     records = ocr.read_page_records(DOC)
     assert len(records) >= 1
     nums = [int(r["page_number"]) for r in records]
-    assert nums == sorted(nums)           # sorted by page_number
-    assert nums[0] == 0                    # 0-indexed
+    assert nums == sorted(nums)
+    assert nums[0] == 0
 
     pd = ocr.build_page_data(records[0], page_image="fake/page.png")
     assert pd.document_id == DOC
     assert pd.page_number == 0
     assert pd.page_image == "fake/page.png"
     assert isinstance(pd.markdown, str) and isinstance(pd.html, str)
-    assert pd.markdown  # non-empty OCR text
+    assert pd.markdown

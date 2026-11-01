@@ -1,9 +1,3 @@
-"""
-Final Validator (spec §8.15, §18). Checks the assembled FinalDocument for cross-page
-reconstruction errors (duplicated boundary text, missing continuation, wrong stitch
-grouping, unresolved open units, …). Report-only in v1.
-"""
-
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -17,7 +11,6 @@ from src.stages._common import payload_json
 
 
 def _coverage_gate(page_summaries: List[Dict[str, Any]]):
-    """Deterministic empty-page check (C2). Returns (empty, total, ratio, tripped)."""
     total = len(page_summaries)
     empty = sum(1 for s in page_summaries if s.get("empty_nontrivial"))
     ratio = (empty / total) if total else 0.0
@@ -48,8 +41,6 @@ def validate(
     obj.setdefault("document_id", document_id)
     result = FinalValidation.from_dict(obj)
 
-    # C2: deterministic coverage gate. If too many NON-TRIVIAL pages came back empty
-    # (dropped/failed pages), FLAG the document as failed — never silently "pass".
     empty, total, ratio, tripped = _coverage_gate(page_summaries)
     if tripped:
         result.status = "fail"
