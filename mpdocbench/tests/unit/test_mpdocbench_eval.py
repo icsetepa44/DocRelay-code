@@ -6,7 +6,7 @@ from src.core import config
 from src.eval import mpdocbench as mpdb
 
 pytestmark = pytest.mark.skipif(not (config.MPDOCBENCH_REPO / "metrics").is_dir(),
-                                reason="official MPDocBench code not downloaded (data/mpdocbench/repo/MPDocBench)")
+                                reason="MPDocBench repo not found (data/mpdocbench/repo/MPDocBench)")
 from src.eval.mpdocbench import GoldDoc, PredDoc, PredElement
 from src.stages._common import table_to_text
 
@@ -101,13 +101,13 @@ def test_pred_markdown_export():
     assert md == "# Intro\n\nHello world.\n\n" + _TABLE_HTML + "\n\n$$E=mc^2$$"
 
 
-def test_official_text_edit_identical_and_perturbed():
-    same = mpdb.official_text_edit.score(_gold(), mpdb.pred_markdown(_fd()), "testdoc.pdf")
+def test_text_edit_identical_and_perturbed():
+    same = mpdb.text_edit.score(_gold(), mpdb.pred_markdown(_fd()), "testdoc.pdf")
     assert same["edit_dist"] == pytest.approx(0.0) and same["score"] == pytest.approx(1.0)
     assert same["n_blocks"] >= 2 and set(same) == {"edit_num", "upper", "edit_dist", "score", "n_blocks"}
     fd2 = _fd()
     fd2["units"] = [u for u in fd2["units"] if u["block_type"] != "text_block"]
-    assert mpdb.official_text_edit.score(_gold(), mpdb.pred_markdown(fd2), "testdoc.pdf")["score"] < 1.0
+    assert mpdb.text_edit.score(_gold(), mpdb.pred_markdown(fd2), "testdoc.pdf")["score"] < 1.0
 
 
 def test_text_diag_flags_over_production():
@@ -142,9 +142,9 @@ def _ro_pred(texts, order):
 
 def test_score_reading_order():
     texts, gold = _ro_gold()
-    s_ident = mpdb.score_reading_order(mpdb.match_text(_ro_pred(texts, [0, 1, 2, 3]), gold))["score"]
-    s_rev = mpdb.score_reading_order(mpdb.match_text(_ro_pred(texts, [3, 2, 1, 0]), gold))["score"]
-    s_miss = mpdb.score_reading_order(mpdb.match_text(_ro_pred(texts, [0, 1, 2]), gold))["score"]
+    s_ident = mpdb.score_reading_order(mpdb.match_text_document(_ro_pred(texts, [0, 1, 2, 3]), gold))["score"]
+    s_rev = mpdb.score_reading_order(mpdb.match_text_document(_ro_pred(texts, [3, 2, 1, 0]), gold))["score"]
+    s_miss = mpdb.score_reading_order(mpdb.match_text_document(_ro_pred(texts, [0, 1, 2]), gold))["score"]
     assert s_ident == 1.0
     assert s_ident > s_rev
     assert s_ident > s_miss
@@ -158,8 +158,24 @@ def test_reading_order_merged_block_not_penalised():
                     text=texts[0] + " " + texts[1]),
         PredElement(unit_id="c", block_type="text_block", category="text_block", page=1, seq=1, text=texts[2]),
         PredElement(unit_id="d", block_type="text_block", category="text_block", page=1, seq=2, text=texts[3])])
-    ro = mpdb.score_reading_order(mpdb.match_text(merged, gold))
+    ro = mpdb.score_reading_order(mpdb.match_text_document(merged, gold))
     assert ro["score"] == 1.0 and ro["n_gold"] == 4
+
+
+def test_reading_order_matches_across_pages():
+    texts = ["alpha first block", "beta second block"]
+    gold = GoldDoc(text_elems=[{"page_id": p, "order": p, "category": "text_block", "text": t}
+                               for p, t in ((1, texts[0]), (2, texts[1]))])
+    pred = PredDoc(elements=[PredElement(unit_id=str(p), block_type="text_block", category="text_block",
+                                         page=p, seq=0, text=t) for p, t in ((1, texts[1]), (2, texts[0]))])
+    ro = mpdb.score_reading_order(mpdb.match_text_document(pred, gold))
+    assert ro["n_matched"] == 2 and ro["score"] < 1.0
+
+
+def test_reading_order_is_mean_of_documents():
+    per_doc = [{"doc": "a", "reading_order": {"edit_num": 30, "upper": 100, "score": 0.7}},
+               {"doc": "b", "reading_order": {"edit_num": 0, "upper": 10, "score": 1.0}}]
+    assert mpdb._aggregate(per_doc, {})["overall"]["reading_order"] == pytest.approx(0.85)
 
 
 def test_score_text_diag_under_and_over_segmentation():
@@ -279,25 +295,12 @@ def test_evaluate_doc_end_to_end():
             assert 0.0 <= v <= 1.0, f"{path} out of range: {v}"
 
 
-def test_render_weak_spots():
-    results = {"run": "r", "skipped_no_gold": [], "models": {"gemma": {
-        "per_doc": [mpdb.evaluate_doc("testdoc", _fd(), _gold())],
-        "aggregate": {"overall": {k: 0.4 for k, _ in mpdb._METRIC_LABELS},
-                      "by_domain": {"book": {k: 0.4 for k, _ in mpdb._METRIC_LABELS}},
-                      "n_docs": 1}}}}
-    md = mpdb.render_weak_spots(results, {"testdoc": "book"})
-    assert "Model: gemma" in md and "book" in md and "{{" not in md
-    assert "| Domain |" in md
-
-
 def test_evaluate_run_empty(tmp_path, monkeypatch):
     monkeypatch.setattr(mpdb, "load_gold_index", lambda: {})
     monkeypatch.setattr(mpdb, "_domain_map", lambda stems: {})
     res = mpdb.evaluate_run(tmp_path)
     assert res["models"] == {}
-    out = tmp_path / "_mpdocbench"
-    assert (out / "metrics.json").is_file() and (out / "weak_spots.md").is_file()
-    assert "No scored documents" in (out / "weak_spots.md").read_text(encoding="utf-8")
+    assert (tmp_path / "_mpdocbench" / "metrics.json").is_file()
 
 
 def test_evaluate_run_scores_synthetic_doc(tmp_path, monkeypatch):
@@ -407,14 +410,3 @@ def test_evaluate_doc_redirects_unmatched_table_into_text():
     assert res["text"]["n_blocks"] > 0 and res["text"]["score"] > 0.0
     assert res["text_diag"]["n_pred"] == 3
     assert res["table_diag"]["precision"] == 0.0 and res["table_diag"]["n_pred"] == 1
-
-
-def test_find_struggles_flags_headings_and_table_overprediction():
-    per_doc = [{"doc": "d1", "heads": {"score": 0.20, "n_gold_titles": 10, "n_pred_heads": 14},
-                "table_diag": {"precision": 0.0, "n_gold": 0, "n_pred": 5}}]
-    out = " ".join(mpdb._find_struggles(per_doc, {"d1": "magazine"}))
-    assert "heading-tree 0.20" in out and "gold titles) — heading level/nesting" in out
-    assert "over-predicts tables — 5 pred vs 0 gold" in out
-    clean = [{"doc": "d2", "heads": {"score": 0.9, "n_gold_titles": 10, "n_pred_heads": 10},
-              "table_diag": {"precision": 1.0, "n_gold": 2, "n_pred": 2}}]
-    assert mpdb._find_struggles(clean, {"d2": "paper"}) == []

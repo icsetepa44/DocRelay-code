@@ -7,8 +7,8 @@ import pytest
 from src.core import config
 from src.eval import adapt, evaluate
 
-needs_official = pytest.mark.skipif(not (config.MPDOCBENCH_REPO / "dataset" / "end2end_dataset.py").is_file(),
-                                    reason="official MPDocBench code not downloaded (data/mpdocbench/repo/MPDocBench)")
+needs_mpdocbench_repo = pytest.mark.skipif(not (config.MPDOCBENCH_REPO / "dataset" / "end2end_dataset.py").is_file(),
+                                           reason="MPDocBench repo not found (data/mpdocbench/repo/MPDocBench)")
 
 
 def _write(path: Path, obj) -> Path:
@@ -77,7 +77,7 @@ def _without_text_edit(m):
     return {k: v for k, v in m.items() if k != "text_edit"}
 
 
-@needs_official
+@needs_mpdocbench_repo
 def test_regression_identity_with_the_original_evaluator(tmp_path):
     gold_path, fd = _identity_case(tmp_path)
     m = evaluate.evaluate_pair(evaluate.load_gold(gold_path), adapt.adapt_final_document(fd), "docA")
@@ -101,7 +101,7 @@ def _tiny_run(tmp_path, legacy=False):
     return run, gold_root
 
 
-@needs_official
+@needs_mpdocbench_repo
 def test_run_is_read_only_on_inputs_and_writes_only_eval(tmp_path):
     run, gold_root = _tiny_run(tmp_path)
     before_run, before_gold = _tree_hash(run), _tree_hash(gold_root)
@@ -117,10 +117,10 @@ def test_run_is_read_only_on_inputs_and_writes_only_eval(tmp_path):
     assert metrics["results"]["m"]["docA"]["text_edit"]["n_blocks"] >= 3
     assert (run / "_eval" / "final_documents" / "docA" / "m" / "final_stitched_document.json").exists()
     assert sorted(p.name for p in (run / "_eval").iterdir()) == [
-        "final_documents", "integrity.json", "metrics.json", "summary.md"]
+        "final_documents", "integrity.json", "metrics.json"]
 
 
-@needs_official
+@needs_mpdocbench_repo
 def test_legacy_single_model_layout(tmp_path):
     run, gold_root = _tiny_run(tmp_path, legacy=True)
     out = evaluate.evaluate_run(run, gold_root=gold_root, workers=1)

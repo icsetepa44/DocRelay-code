@@ -5,8 +5,8 @@ import pytest
 from src.core import config
 from src.eval import evaluate
 
-needs_official = pytest.mark.skipif(not (config.MPDOCBENCH_REPO / "dataset" / "end2end_dataset.py").is_file(),
-                                    reason="official MPDocBench code not downloaded (data/mpdocbench/repo/MPDocBench)")
+needs_mpdocbench_repo = pytest.mark.skipif(not (config.MPDOCBENCH_REPO / "dataset" / "end2end_dataset.py").is_file(),
+                                           reason="MPDocBench repo not found (data/mpdocbench/repo/MPDocBench)")
 
 
 def _gold(*clauses, tables=()):
@@ -45,14 +45,14 @@ def test_levenshtein_on_token_lists():
     assert evaluate._levenshtein(a, b) == evaluate._levenshtein_dp(a, b) == 3
 
 
-def test_official_sample_and_pred_markdown_shapes():
+def test_mpdocbench_sample_and_pred_markdown_shapes():
     raw = {"parsed_text": [
         {"type": "clause", "text": "1. Goods [table_1] are exempt.\n\n(a) subject to rules", "text_id": "c0",
          "page_start": 1},
         {"type": "metadata", "metadata_category": "page", "text": "Page 2", "text_id": "m0", "page_start": 2}],
         "tables": [{"table_id": "table_1", "parent_text_id": "c0", "headers": ["HS"], "rows": [["01"]],
                     "page_start": 1}]}
-    dets = evaluate.official_sample("d", raw)["layout_dets"]
+    dets = evaluate.mpdocbench_sample("d", raw)["layout_dets"]
     assert [x["category_type"] for x in dets] == ["text_block", "page_number", "table"]
     assert dets[0]["text"] == "1. Goods   are exempt.\n(a) subject to rules"
     assert dets[2]["html"] == "<table><tr><td>HS</td></tr><tr><td>01</td></tr></table>" and dets[2]["order"] == 1.5
@@ -62,7 +62,7 @@ def test_official_sample_and_pred_markdown_shapes():
     assert md == "A\nB\n\n<table><tr><td>x</td></tr></table>\n\nC\n\n<table><tr><td>y</td></tr></table>"
 
 
-@needs_official
+@needs_mpdocbench_repo
 def test_evaluate_pair_returns_only_the_paper_fields():
     m = evaluate.evaluate_pair(
         _gold("The applicant shall submit the required documents within thirty days."),
@@ -71,8 +71,8 @@ def test_evaluate_pair_returns_only_the_paper_fields():
     assert m["text_edit"]["edit_dist"] == 0.0 and m["gold_clauses"] == 1 and m["gold_tables"] == 0
 
 
-@needs_official
-def test_official_text_edit_counts_typos():
+@needs_mpdocbench_repo
+def test_text_edit_counts_typos():
     m = evaluate.evaluate_pair(
         _gold("The applicant shall submit the required documents within thirty days."),
         _pred("The applicant shall submit the requred documnts within thirty days."))
@@ -83,14 +83,14 @@ _TABLE_KEYS = ("table_teds",)
 _TABLE = {"headers": ["h1", "h2"], "rows": [["a", "b"], ["c", "d"]]}
 
 
-@needs_official
+@needs_mpdocbench_repo
 def test_structural_table_keys_none_without_tables():
     m = evaluate.evaluate_pair(_gold("A plain clause with no tables."), _pred("A plain clause with no tables."))
     for k in _TABLE_KEYS:
         assert k in m and m[k] is None
 
 
-@needs_official
+@needs_mpdocbench_repo
 def test_structural_table_keys_perfect_on_identical_table():
     m = evaluate.evaluate_pair(_gold("see the schedule", tables=[_TABLE]), _pred("see the schedule", tables=[_TABLE]))
     for k in _TABLE_KEYS:
@@ -98,7 +98,7 @@ def test_structural_table_keys_perfect_on_identical_table():
     assert m["gold_tables"] == 1
 
 
-@needs_official
+@needs_mpdocbench_repo
 def test_structural_table_keys_drop_when_pred_table_missing():
     m = evaluate.evaluate_pair(_gold("see the schedule", tables=[_TABLE]), _pred("see the schedule"))
     for k in _TABLE_KEYS:

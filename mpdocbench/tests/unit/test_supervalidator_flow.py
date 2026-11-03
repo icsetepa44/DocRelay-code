@@ -239,8 +239,8 @@ def test_prompts_render_without_leftover_tokens(name, domain):
 
 
 @pytest.mark.skipif(not (config.MPDOCBENCH_REPO / "metrics").is_dir(),
-                    reason="official MPDocBench code not downloaded (data/mpdocbench/repo/MPDocBench)")
-def test_output_scores_through_unchanged_mpdocbench_evaluator(env, monkeypatch, tmp_path):
+                    reason="MPDocBench repo not found (data/mpdocbench/repo/MPDocBench)")
+def test_output_scores_through_mpdocbench_evaluator(env, monkeypatch, tmp_path):
     review = {"page_number": 0, "status": "clean", "issues": [], "continuation_review": [
         {"block_id": f"{DOC}:p0000:b0003", "stitch_id": None, "decision": "continues", "evidence": []}]}
     env(FakeLLM(sv={0: review}))

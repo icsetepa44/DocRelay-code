@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from tqdm import tqdm
 
 from src.core import config
-from src.eval import adapt, official_text_edit
+from src.eval import adapt, text_edit
 from src.eval.table_structure import score_tables
 
 try:
@@ -169,7 +169,7 @@ def _one_block(text: Optional[str]) -> str:
     return re.sub(r"\n\s*\n+", "\n", (text or "").strip())
 
 
-def official_sample(doc: str, raw: Dict[str, Any]) -> Dict[str, Any]:
+def mpdocbench_sample(doc: str, raw: Dict[str, Any]) -> Dict[str, Any]:
     dets: List[Dict[str, Any]] = []
     order_of: Dict[Any, int] = {}
     for i, it in enumerate(raw.get("parsed_text", []) or []):
@@ -210,7 +210,7 @@ def evaluate_pair(gold: Dict[str, Any], pred: Dict[str, Any], doc: str = "doc") 
         "gold_clauses": sum(1 for x in gold_items if x["type"] == "clause"),
         "gold_metadata": sum(1 for x in gold_items if x["type"] == "metadata"),
         "gold_tables": len(tables),
-        "text_edit": official_text_edit.score(official_sample(doc, gold["raw"]), pred_markdown(pred), f"{doc}.pdf"),
+        "text_edit": text_edit.score(mpdocbench_sample(doc, gold["raw"]), pred_markdown(pred), f"{doc}.pdf"),
         "table_teds": table_shape.get("table_teds"),
     }
 
@@ -251,22 +251,6 @@ def input_files(pairs: List[Tuple[str, str, Path, Path]]) -> List[Path]:
         files.add(gold)
         files.update((fd.parent / "pages").glob("*/extraction.json"))
     return sorted(files)
-
-
-def render_summary(results: Dict[str, Dict[str, Dict[str, Any]]]) -> str:
-    lines = ["# TIDE evaluation\n",
-             "Per document: Text Edit = the official MPDocBench text edit distance (matched text blocks, summed "
-             "edits / summed lengths; lower is better); Table TEDS = tree-edit similarity of the tables x 100, for "
-             "documents with gold tables (higher is better). The run-level metrics are in `paper_metrics.json`.\n"]
-    for model, docs in results.items():
-        lines += [f"## {model}\n", "| Document | Text Edit | Table TEDS |", "|---|---|---|"]
-        for doc, m in docs.items():
-            text_edit, teds = m.get("text_edit"), m.get("table_teds")
-            text_cell = "-" if text_edit is None else f"{text_edit['edit_dist']:.4f}"
-            teds_cell = "-" if teds is None else f"{100 * teds:.2f}"
-            lines.append(f"| {doc} | {text_cell} | {teds_cell} |")
-        lines.append("")
-    return "\n".join(lines)
 
 
 def discover_pairs(run_dir: Path, gold_root: Path) -> Tuple[List[Tuple[str, str, Path, Path]], List[Dict]]:
@@ -340,7 +324,6 @@ def evaluate_run(run_dir: Path, gold_root: Path = GOLD_ROOT, out_dir: Optional[P
     (out_dir / "metrics.json").write_text(json.dumps(
         {"evaluator": EVALUATOR_VERSION, "results": results,
          "skipped": skipped, "errors": errors}, ensure_ascii=False, indent=2), encoding="utf-8")
-    (out_dir / "summary.md").write_text(render_summary(results), encoding="utf-8")
 
     checks = {
         "inputs_unchanged": (not changed) if verify_inputs else None,

@@ -92,7 +92,7 @@ def _run_one_pair(model: dict, doc: str, run_dir: Path, on_page_done=None) -> tu
 
 
 def _build_reports(run_dir: Path) -> None:
-    print("  MPDocBench eval -> _mpdocbench/{metrics.json, weak_spots.md}", flush=True)
+    print("  MPDocBench eval -> _mpdocbench/metrics.json", flush=True)
     mpdocbench.evaluate_run(run_dir)
     runs = [config.RUNS_DIR / r for r in PAPER_TABLE_RUNS] if PAPER_TABLE_RUNS else [run_dir]
     print(f"  paper table ({[r.name for r in runs]}) -> _mpdocbench/paper_table.json", flush=True)

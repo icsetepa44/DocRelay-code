@@ -107,5 +107,4 @@ router) on small synthetic inputs. They need no PDFs and make no model calls.
 
 ## Licences
 
-Gemma, DeepSeek, multilingual-E5, ChandraOCR 2 and DINOv3 each have their own licence. The official MPDocBench code
-is Apache-2.0.
+Gemma, DeepSeek, multilingual-E5, ChandraOCR 2 and DINOv3 each have their own licence.

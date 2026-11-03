@@ -14,7 +14,7 @@ if str(_DU) not in sys.path:
     sys.path.insert(0, str(_DU))
 
 from src.core import config
-from src.eval import adapt, official_text_edit
+from src.eval import adapt, text_edit
 from src.eval.table_structure import to_grid, _assign
 
 
@@ -58,28 +58,16 @@ def _load_leaf() -> Dict[str, Any]:
         if spec is None or spec.loader is None:
             raise ImportError(f"cannot build import spec for {path}")
         mod = importlib.util.module_from_spec(spec)
-        try:
-            spec.loader.exec_module(mod)
-        except ImportError as exc:
-            raise ImportError(
-                f"MPDocBench metric dependency missing while loading {rel}: {exc}. "
-                f"Install with:  pip install Levenshtein apted pylatexenc"
-            ) from exc
+        spec.loader.exec_module(mod)
         return mod
 
     tm = _load_file("mpdb_table_metric", "metrics/table_metric.py")
     hm = _load_file("mpdb_head_metric", "metrics/head_metric.py")
-    try:
-        dp = importlib.import_module("utils.data_preprocess")
-        mt = importlib.import_module("utils.merge_tables")
-        ru = importlib.import_module("utils.relation_utils")
-        mq = importlib.import_module("utils.match_quick")
-        import Levenshtein as lev
-    except ImportError as exc:
-        raise ImportError(
-            f"MPDocBench metric dependency missing: {exc}. "
-            f"Install with:  pip install Levenshtein apted pylatexenc beautifulsoup4 evaluate"
-        ) from exc
+    dp = importlib.import_module("utils.data_preprocess")
+    mt = importlib.import_module("utils.merge_tables")
+    ru = importlib.import_module("utils.relation_utils")
+    mq = importlib.import_module("utils.match_quick")
+    import Levenshtein as lev
 
     def _match_quick(gt_items, pred_items, line_type, img_name):
         return mq.match_gt2pred_quick(gt_items, pred_items, line_type, img_name), None
@@ -451,6 +439,21 @@ def match_text(pred: PredDoc, gold: GoldDoc) -> TextMatch:
     return TextMatch(per_page=per_page, n_gold=n_gold, n_pred=n_pred)
 
 
+def _document_items(entries: List[Tuple[int, int, str, str]]) -> List[Dict[str, Any]]:
+    kept = sorted((e for e in entries if _norm_text(e[2])), key=lambda x: (x[0], x[1]))
+    return [{"category_type": "text_all", "content": txt, "order": i + 1, "position": [i + 1],
+             "fine_category_type": cat} for i, (_p, _o, txt, cat) in enumerate(kept)]
+
+
+def match_text_document(pred: PredDoc, gold: GoldDoc) -> TextMatch:
+    gold_items = _document_items(_gold_text_entries(gold))
+    pred_items = _document_items(_pred_text_entries(pred))
+    if not gold_items and not pred_items:
+        return TextMatch(per_page=[], n_gold=0, n_pred=0)
+    records, _extra = _load_leaf()["match_gt2pred"](gold_items, pred_items, "text", "document")
+    return TextMatch(per_page=[records], n_gold=len(gold_items), n_pred=len(pred_items))
+
+
 def score_text_diag(match: TextMatch) -> Optional[Dict[str, Any]]:
     if match.n_gold == 0 and match.n_pred == 0:
         return None
@@ -544,7 +547,7 @@ def score_heads(pred: PredDoc, gold: GoldDoc) -> Optional[Dict[str, Any]]:
             "n_gold_titles": gold.n_titles, "n_pred_heads": len(pred.head_md)}
 
 
-def score_reading_order(match: TextMatch) -> Dict[str, Any]:
+def score_reading_order(match: TextMatch) -> Optional[Dict[str, Any]]:
     L = _load_leaf()
     lev = L["lev_distance"]
     edit_num = upper = 0
@@ -564,8 +567,9 @@ def score_reading_order(match: TextMatch) -> Dict[str, Any]:
         upper += max(len(gt_s), len(prd_s))
         n_gold += len(gt)
         n_matched += len(prd)
-    return {"edit_num": edit_num, "upper": upper,
-            "score": (1.0 - edit_num / upper) if upper else 1.0,
+    if not upper:
+        return None
+    return {"edit_num": edit_num, "upper": upper, "score": 1.0 - edit_num / upper,
             "n_gold": n_gold, "n_pred": n_matched, "n_matched": n_matched}
 
 
@@ -685,13 +689,13 @@ def evaluate_doc(doc: str, fd: Dict[str, Any], gold_entry: Dict[str, Any]) -> Di
     text_match = match_text(pred, gold)
     return {
         "doc": doc,
-        "text": official_text_edit.score(gold_entry, pred_markdown(fd),
-                                         os.path.basename((gold_entry.get("page_info") or {}).get("image_path", ""))),
+        "text": text_edit.score(gold_entry, pred_markdown(fd),
+                                os.path.basename((gold_entry.get("page_info") or {}).get("image_path", ""))),
         "text_diag": score_text_diag(text_match),
         "table": score_tables(pred, gold, match),
         "table_diag": score_table_diag(match),
         "heads": score_heads(pred, gold),
-        "reading_order": score_reading_order(text_match),
+        "reading_order": score_reading_order(match_text_document(pred, gold)),
         "merged_text": score_merged_text(pred, gold),
         "merged_table": score_merged_table(pred, gold),
         "relation": score_relation(pred, gold_entry),
@@ -731,21 +735,10 @@ def _mean(xs: List[float]) -> Optional[float]:
     return sum(xs) / len(xs) if xs else None
 
 
-_MICRO_METRICS = ("reading_order",)
-
-
-def _micro(docs: List[Dict[str, Any]], metric: str) -> Optional[float]:
-    num = sum(d[metric]["edit_num"] for d in docs if d.get(metric) and "edit_num" in d[metric])
-    den = sum(d[metric]["upper"] for d in docs if d.get(metric) and "upper" in d[metric])
-    return (1.0 - num / den) if den else None
-
-
 def _aggregate(per_doc: List[Dict[str, Any]], domain_of: Dict[str, str]) -> Dict[str, Any]:
     overall: Dict[str, Optional[float]] = {}
     for name, path in _PRIMARY:
         overall[name] = _mean([v for v in (_dig(d, path) for d in per_doc) if v is not None])
-    for m in _MICRO_METRICS:
-        overall[m] = _micro(per_doc, m)
     by_domain: Dict[str, Dict[str, Optional[float]]] = {}
     for d in per_doc:
         by_domain.setdefault(domain_of.get(d["doc"], "unknown"), {})
@@ -753,8 +746,6 @@ def _aggregate(per_doc: List[Dict[str, Any]], domain_of: Dict[str, str]) -> Dict
         docs = [d for d in per_doc if domain_of.get(d["doc"], "unknown") == dom]
         for name, path in _PRIMARY:
             by_domain[dom][name] = _mean([v for v in (_dig(x, path) for x in docs) if v is not None])
-        for m in _MICRO_METRICS:
-            by_domain[dom][m] = _micro(docs, m)
     return {"overall": overall, "by_domain": by_domain, "n_docs": len(per_doc)}
 
 
@@ -795,107 +786,7 @@ def evaluate_run(run_dir: Path) -> Dict[str, Any]:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "metrics.json").write_text(
         json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
-    (out_dir / "weak_spots.md").write_text(
-        render_weak_spots(results, domain_of), encoding="utf-8")
     return results
-
-
-_METRIC_LABELS = [
-    ("text", "Text"), ("text_diag_f1", "TxtDiagF1"), ("table", "Table"), ("heads", "Heading"),
-    ("reading_order", "ReadOrder"), ("merged_text", "MrgText"), ("merged_table", "MrgTable"),
-    ("table_diag_f1", "TblDiagF1"),
-]
-
-
-def _fmt(v: Optional[float]) -> str:
-    return "  -  " if v is None else f"{v:.3f}"
-
-
-def render_weak_spots(results: Dict[str, Any], domain_of: Dict[str, str]) -> str:
-    lines: List[str] = ["# MPDocBench weak-spot report", ""]
-    if results.get("skipped_no_gold"):
-        lines += [f"> Skipped (no gold match): {', '.join(results['skipped_no_gold'])}", ""]
-    if not results.get("models"):
-        lines += ["No scored documents found in this run.", ""]
-        return "\n".join(lines)
-
-    for model, mres in results["models"].items():
-        agg = mres["aggregate"]
-        lines += [f"## Model: {model}  ({agg['n_docs']} docs)", ""]
-        labels = list(_METRIC_LABELS)
-        header = "| Domain | " + " | ".join(lbl for _, lbl in labels) + " |"
-        sep = "|" + "---|" * (len(labels) + 1)
-        lines += [header, sep]
-        row_all = "| **all** | " + " | ".join(
-            _fmt(agg["overall"].get(k)) for k, _ in labels) + " |"
-        lines.append(row_all)
-        for dom in sorted(agg["by_domain"]):
-            dm = agg["by_domain"][dom]
-            lines.append("| " + dom + " | " + " | ".join(
-                _fmt(dm.get(k)) for k, _ in labels) + " |")
-        lines.append("")
-
-        lines += ["### Where it struggles", ""]
-        struggles = _find_struggles(mres["per_doc"], domain_of)
-        if not struggles:
-            lines += ["Nothing flagged above threshold.", ""]
-        else:
-            for s in struggles:
-                lines.append(f"- {s}")
-            lines.append("")
-
-        lines += ["<details><summary>Per-document scores</summary>", "",
-                  "| Doc | Domain | " + " | ".join(lbl for _, lbl in labels) + " |",
-                  "|" + "---|" * (len(labels) + 2)]
-        for d in mres["per_doc"]:
-            vals = " | ".join(_fmt(_dig(d, dict(_PRIMARY)[k])) for k, _ in labels)
-            lines.append(f"| {d['doc']} | {domain_of.get(d['doc'], '?')} | {vals} |")
-        lines += ["", "</details>", ""]
-    return "\n".join(lines)
-
-
-def _find_struggles(per_doc: List[Dict[str, Any]], domain_of: Dict[str, str]) -> List[str]:
-    out: List[str] = []
-    for d in per_doc:
-        doc = d["doc"]
-        dom = domain_of.get(doc, "?")
-        tbl = d.get("table")
-        if tbl and tbl["n_gold"] >= 2 and tbl["teds"] < 0.5:
-            out.append(f"**{doc}** ({dom}): table TEDS {tbl['teds']:.2f} over {tbl['n_gold']} gold "
-                       f"tables (pred {tbl['n_pred']}) — table structure/reading.")
-        mt = d.get("merged_text")
-        if mt and mt["n_gold_merges"] >= 1 and mt["score"] < 0.5:
-            out.append(f"**{doc}** ({dom}): cross-page text merge {mt['score']:.2f} "
-                       f"({mt['n_pred_merges']} pred vs {mt['n_gold_merges']} gold merges) — continuation miss.")
-        mtb = d.get("merged_table")
-        if mtb and mtb["n_gold_merges"] >= 1 and mtb["teds"] < 0.5:
-            out.append(f"**{doc}** ({dom}): cross-page table merge {mtb['teds']:.2f} "
-                       f"({mtb['n_pred_merges']} pred vs {mtb['n_gold_merges']} gold) — table continuation miss.")
-        txt = d.get("text")
-        if txt and txt["upper"] > 200 and txt["score"] < 0.5:
-            out.append(f"**{doc}** ({dom}): text edit {txt['edit_dist']:.2f} "
-                       f"over {txt['n_blocks']} matched text blocks — text extraction gap.")
-        tdg = d.get("text_diag")
-        if tdg and tdg["n_gold"] >= 5 and tdg["recall"] < 0.6:
-            out.append(f"**{doc}** ({dom}): text segmentation recall {tdg['recall']:.2f} "
-                       f"({tdg['n_true_matches']} of {tdg['n_gold']} gold text blocks matched, "
-                       f"{tdg['n_pred']} pred) — under-segmentation (blocks merged together).")
-        if tdg and tdg["n_gold"] >= 5 and tdg["precision"] < 0.6 and tdg["n_pred"] > tdg["n_gold"]:
-            out.append(f"**{doc}** ({dom}): text segmentation precision {tdg['precision']:.2f} "
-                       f"({tdg['n_pred']} pred vs {tdg['n_gold']} gold text blocks) — over-production.")
-        ro = d.get("reading_order")
-        if ro and ro["n_gold"] >= 5 and ro["score"] < 0.5:
-            out.append(f"**{doc}** ({dom}): reading-order {ro['score']:.2f} "
-                       f"({ro['n_matched']} of {ro['n_gold']} gold text blocks matched & in order) — order/coverage.")
-        hd = d.get("heads")
-        if hd and hd["n_gold_titles"] >= 3 and hd["score"] < 0.35:
-            out.append(f"**{doc}** ({dom}): heading-tree {hd['score']:.2f} "
-                       f"({hd['n_pred_heads']} pred vs {hd['n_gold_titles']} gold titles) — heading level/nesting.")
-        td = d.get("table_diag")
-        if td and td["n_pred"] > td["n_gold"] and td["precision"] < 0.5:
-            out.append(f"**{doc}** ({dom}): over-predicts tables — {td['n_pred']} pred vs {td['n_gold']} gold, "
-                       f"table_diag precision {td['precision']:.2f} — blocks called tables that aren't (over-tabling).")
-    return out
 
 
 def main() -> int:

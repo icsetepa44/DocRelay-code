@@ -81,9 +81,8 @@ inputs:
   # Active value is "mixed". Flip + re-run to A/B test input format.
   ocr_format: mixed
   # OCR input root. Unset (default) -> data/mpdocbench/ocr/ (written by scripts/ocr_images.py; flat <doc>/ or
-  # nested <domain>/<doc>/ folders both work). Also read by the evaluator's figure metric (Chandra layout boxes),
-  # so keep the root matched to the run you score. Optional override, relative to this package or absolute, e.g.
-  # one root per language with one run each:
+  # nested <domain>/<doc>/ folders both work). Optional override, relative to this package or absolute, e.g. one
+  # root per language with one run each:
   # ocr_root: ../data/mpdocbench/ocr_chn
   ocr_root:
 
